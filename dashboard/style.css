@@ -40,6 +40,11 @@ body {
 body[data-state="ready"] { --bg: var(--pine); }
 body[data-state="away"]  { --bg: var(--umber); }
 
+/* idle: everything fades to black; any key brings it back */
+body > * { transition: opacity var(--fade) ease; }
+body.blank { --bg: #000; }
+body.blank > * { opacity: 0; }
+
 /* top strip */
 .top {
   display: flex;
@@ -124,7 +129,7 @@ kbd.held {
 .pi { margin-left: auto; }
 
 @media (prefers-reduced-motion: reduce) {
-  body, kbd { transition: none; }
+  body, body > *, kbd { transition: none; }
 }
 
 /* laptop-browser preview at narrow widths */

@@ -18,8 +18,8 @@ fi
 echo "== files and units"
 sudo install -d /usr/local/share/pi-dashboard
 sudo install -m644 dashboard/index.html dashboard/style.css dashboard/app.js /usr/local/share/pi-dashboard/
-sudo install -m755 bin/pi-dashboard-server /usr/local/bin/
-sudo install -m644 systemd/pi-dashboard.service systemd/pi-dashboard-server.service /etc/systemd/system/
+sudo install -m755 bin/pi-dashboard-server bin/pi-dashboard-blank /usr/local/bin/
+sudo install -m644 systemd/pi-dashboard.service systemd/pi-dashboard-server.service systemd/pi-dashboard-blank.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now pi-dashboard-server.service
 sudo systemctl disable moonlight.service 2>/dev/null || true     # Moonlight's own GUI stays as a manual fallback

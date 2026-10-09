@@ -1,0 +1,13 @@
+# Monitor off while the Pi Room is idle. Started by pi-dashboard-server (POST /api/blank, sent by the page after
+# IDLE_MS without a key). Conflicts= stops cage first (the script needs DRM master) and, being symmetric, also
+# stops this watcher whenever the stream or the player starts, so a key pressed during a stream does not bring the
+# dashboard back. After= orders the stop of those units before ExecStart. Not in pi-dashboard's After= (cycle).
+[Unit]
+Description=Pi Room monitor off until a key is pressed
+Conflicts=pi-dashboard.service moonlight.service moonlight-stream.service pi-player.service getty@tty1.service
+After=pi-dashboard.service moonlight.service moonlight-stream.service pi-player.service
+
+[Service]
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/local/bin/pi-dashboard-blank

@@ -21,6 +21,26 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
 - Page: `dashboard/index.html`, `style.css`, `app.js`. Body `data-state` = checking | ready | away | busy | starting |
   failed; background hue follows it. Keycaps (`<kbd data-key>`) light while held. `describe()` maps status to
   sentence/detail/Enter action; `PROBES` + `describe()` + `KEYS` are the three extension points.
+- Idle: after `IDLE_MS` (`app.js`) without a key the page POSTs `/api/blank`; the server starts
+  `pi-dashboard-blank.service` (root), which `Conflicts=` the display units (so cage stops first, and a stream or
+  player start stops the watcher; it is deliberately absent from pi-dashboard's `After=`, a mutual `After=` makes
+  `systemctl restart pi-dashboard` fail with "Transaction order is cyclic"). The script opens `/dev/dri/card1`,
+  `drmSetMaster`, `drmModeSetCrtc(fd, crtc, 0, 0, 0, NULL, 0, NULL)` on every CRTC (libdrm via ctypes), and keeps
+  the fd open while it waits for the first `EV_KEY` press on any `/dev/input/event*` (raw evdev, same loop as
+  `pi-console-keys`); then closes the fd (fbcon takes the display back) and `systemctl --no-block start pi-dashboard`.
+  The wake key goes to the empty console (getty@tty1 is masked), not to the page. If `/api/blank` fails, the page
+  goes black by itself (body class `blank`) and a capture-phase keydown listener wakes it, swallowing that key.
+- Why DRM master and not a console blank: `setterm --blank force` on tty1 (with cage stopped) does give DPMS off, but
+  the ASUS VY229HE drops its hotplug line ~7 s into standby; the kernel logs "status updated from connected to
+  disconnected" and `drm_fb_helper_hotplug_event` re-probes and re-enables the output, so the console came back by
+  itself (seen 2026-10-10 with `drm.debug=0x4`). The fbdev helper skips that restore while another process holds DRM
+  master. `video=HDMI-A-1:...D` does not prevent the event, and Ubuntu's 5.15 raspi `vc4.ko` has no `force_hotplug`
+  parameter (only `tv_norm`, `fkms_max_refresh_rate`).
+- Dead ends for monitor off: cage 0.1.4 has no idle/blank flag (getopt `dhm:rsv`) and no
+  `wlr-output-power-management` (so `wlopm` cannot work; it does offer `org_kde_kwin_idle`); `vcgencmd display_power`
+  only works under fkms, not the full `vc4-kms-v3d` driver used here; a console blank while cage is DRM master does
+  nothing (`dpms` stays `On`). `systemctl stop moonlight-stream pi-dashboard` in one command fails with
+  "Transaction order is cyclic" (the stream's `ExecStopPost` starts the dashboard); stop them one at a time.
 
 ## Facts learned (2026-10-09/10)
 - `cog --platform=drm` is a dead end on the Pi 4: cog 0.12.1 becomes DRM master and loads the page, but the first
@@ -50,3 +70,9 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
 - Logs: `journalctl -u pi-dashboard` (cage + cog), `journalctl -u pi-dashboard-server` ("start stream: ok").
 - Show the dashboard (stops a running stream): `sudo systemctl start pi-dashboard`. Old Moonlight GUI: `sudo systemctl start moonlight`.
 - Is cage drawing: `sudo cat /sys/kernel/debug/dri/1/framebuffer | grep -E 'allocated|modifier'` shows `cage` with `modifier=0x0`.
+- Monitor state: `cat /sys/class/drm/card1-HDMI-A-1/enabled` (`disabled` while pi-dashboard-blank is active) and
+  `dpms`. DRM debug: `echo 0x4 | sudo tee /sys/module/drm/parameters/debug` (KMS; hotplug shows in `journalctl -k`),
+  `echo 0` to turn it off. To test the
+  wake without touching the keyboard there is no `evemu` on the Pi; a stdlib uinput script works (open `/dev/uinput`,
+  ioctl `0x40045564` EV_KEY, `0x40045565` key, write `struct uinput_user_dev` = `80sHHHHi` + 1024 zero bytes, ioctl
+  `0x5501`, sleep 3 s for the watcher's rescan, write `llHHi` key events, ioctl `0x5502`).

@@ -9,9 +9,11 @@
 [Unit]
 Description=Pi Room dashboard on the monitor
 # Conflicts= alone gives no ordering; After= makes systemd finish stopping the others before cog opens /dev/dri.
+# pi-dashboard-blank.service is deliberately NOT in After=: it already has After=pi-dashboard.service, and a mutual
+# After= makes `systemctl restart pi-dashboard` fail with "Transaction order is cyclic".
 After=user@1000.service systemd-user-sessions.service pi-dashboard-server.service moonlight.service moonlight-stream.service pi-player.service
 Wants=user@1000.service pi-dashboard-server.service
-Conflicts=getty@tty1.service moonlight.service moonlight-stream.service pi-player.service
+Conflicts=getty@tty1.service moonlight.service moonlight-stream.service pi-player.service pi-dashboard-blank.service
 
 [Service]
 User=sallen

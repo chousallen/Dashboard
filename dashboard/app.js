@@ -1,11 +1,15 @@
 // Pi Room idle screen: polls /api/status and maps it to one of the states below.
 // Keys: Enter = start the stream (or check again when it cannot start), R = check again.
+// After IDLE_MS without a key the page asks the server to switch the monitor off (pi-dashboard-blank.service
+// replaces this browser; any key starts it again). If the server cannot be reached the page goes black itself
+// instead, and then the next key only wakes it (it is not acted on).
 // Ctrl+Alt+Fx is handled outside the browser by pi-console-keys.
 "use strict";
 
 const POLL_MS = 3000;      // normal refresh
 const RETRY_MS = 2000;     // while the server is unreachable (boot, server restart)
 const LAPTOP = "192.168.0.193";
+const IDLE_MS = 10 * 60 * 1000;   // switch the monitor off after this long without a key
 
 const el = {
   body: document.body,
@@ -22,6 +26,8 @@ let status = null;        // last /api/status payload
 let starting = false;     // Enter was pressed; waiting for systemd to take the screen
 let pollTimer = null;
 let checkedAt = null;     // time of the last manual check (R or Enter while it cannot start)
+let blank = false;        // page-side black screen (fallback when /api/blank failed); polling continues underneath
+let idleTimer = null;
 
 function checkedNote() {
   return checkedAt ? " Checked at " + checkedAt + "." : "";
@@ -128,6 +134,38 @@ function capFor(key) {
   return document.querySelector('kbd[data-key="' + key + '"]');
 }
 
+// ---- idle blanking --------------------------------------------------------
+
+function setBlank(on) {
+  blank = on;
+  el.body.classList.toggle("blank", on);
+}
+
+async function idle() {
+  try {
+    const r = await fetch("/api/blank", { method: "POST" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    // systemd now stops this browser and blanks the console; nothing more to do here
+  } catch (e) {
+    setBlank(true);
+  }
+}
+
+function touch() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(idle, IDLE_MS);
+}
+
+document.addEventListener("keydown", (e) => {
+  touch();
+  if (blank) {
+    // The waking key is swallowed so that Enter cannot start the stream from a dark screen.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    setBlank(false);
+  }
+}, true);
+
 document.addEventListener("keydown", (e) => {
   if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -153,4 +191,5 @@ function tick() {
 
 tick();
 setInterval(tick, 10000);
+touch();
 poll();

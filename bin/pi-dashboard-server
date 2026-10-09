@@ -2,7 +2,9 @@
 """HTTP backend for the Pi Room idle screen (pi-dashboard.service shows it in cog).
 
 Serves the static page, the local IBM Plex font files, /api/status (JSON, refreshed by a background thread)
-and POST /api/stream/start (starts moonlight-stream.service; systemd then stops the browser).  Stdlib only.
+POST /api/stream/start (starts moonlight-stream.service; systemd then stops the browser) and POST /api/blank (starts
+pi-dashboard-blank.service: stops the browser, holds DRM master with every CRTC off = monitor asleep, any key
+brings the dashboard back).  Stdlib only.
 
 Add a feature: write a probe function, register it in PROBES, read its key in app.js.
 Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
@@ -18,6 +20,7 @@ FONT_DIRS = ["/usr/share/fonts-ibm-plex/woff2", "/usr/share/fonts/truetype/ibm-p
 LAPTOP = "192.168.0.193"
 SUNSHINE = f"http://{LAPTOP}:47989/serverinfo"
 STREAM_UNIT = "moonlight-stream.service"
+BLANK_UNIT = "pi-dashboard-blank.service"
 REFRESH_S = 3.0
 MOCK = os.environ.get("PI_DASHBOARD_MOCK")
 
@@ -108,10 +111,10 @@ def collect():
 
 # ---- actions ---------------------------------------------------------------------------------------------
 
-def start_stream():
+def start_unit(unit):
     if MOCK:
         return True, "mock"
-    rc, out = run(["sudo", "-n", "systemctl", "--no-block", "start", STREAM_UNIT], timeout=5)
+    rc, out = run(["sudo", "-n", "systemctl", "--no-block", "start", unit], timeout=5)
     return rc == 0, out
 
 
@@ -161,10 +164,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/api/stream/start":
-            ok, out = start_stream()
-            print(f"start stream: {'ok' if ok else 'FAILED ' + out.strip()}", flush=True)
-            return self.send_json({"ok": ok, "detail": out.strip()}, 200 if ok else 500)
+            return self.start("start stream", STREAM_UNIT)
+        if self.path == "/api/blank":
+            return self.start("blank", BLANK_UNIT)
         return self.send_error(404)
+
+    def start(self, what, unit):
+        ok, out = start_unit(unit)
+        print(f"{what}: {'ok' if ok else 'FAILED ' + out.strip()}", flush=True)
+        return self.send_json({"ok": ok, "detail": out.strip()}, 200 if ok else 500)
 
 
 def main():

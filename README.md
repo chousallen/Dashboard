@@ -11,12 +11,15 @@ pi-dashboard-server.service    python3 bin/pi-dashboard-server
                                GET /fonts/..    IBM Plex (fonts-ibm-plex, served locally)
                                GET /api/status  stream unit state, laptop ping, Sunshine state
                                POST /api/stream/start   sudo systemctl --no-block start moonlight-stream
+                               POST /api/blank          sudo systemctl --no-block start pi-dashboard-blank
+pi-dashboard-blank.service     stops cage, holds DRM master with the CRTCs off (monitor asleep), any key -> pi-dashboard
 ```
 
 What it shows: the background colour is the state (pine green = laptop ready, umber = laptop away,
 slate = starting / error), one large sentence, one keycap. Keys: **Enter** starts or resumes the
 laptop stream, **R** checks again. While the stream runs, **Ctrl+Alt+Shift+Q** on the Pi keyboard
-quits it and the dashboard comes back by itself. **Ctrl+Alt+F3** text console, **Ctrl+Alt+F1**
+quits it and the dashboard comes back by itself. After 10 minutes without a key the monitor is switched
+off; any key brings the dashboard back (that key does nothing else). **Ctrl+Alt+F3** text console, **Ctrl+Alt+F1**
 dashboard (handled by `pi-console-keys` from the room-devices repo, not by the page).
 
 ## Install
@@ -36,5 +39,6 @@ and one entry in `KEYS` (`dashboard/app.js`). Keep every action as a keycap plus
 
 ## Layout
 
-- `dashboard/` – the page. `bin/pi-dashboard-server` – stdlib Python backend. `systemd/` – the two units.
+- `dashboard/` – the page. `bin/pi-dashboard-server` – stdlib Python backend. `bin/pi-dashboard-blank` – monitor-off
+  watcher. `systemd/` – the three units.
 - `build/cog-pi.sh`, `build/cog-patches/` – rebuild of `cog` 0.12.1 for jammy (`build/out/` is not committed).
