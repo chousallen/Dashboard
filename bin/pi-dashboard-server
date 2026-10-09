@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""HTTP backend for the Pi Room idle screen (pi-dashboard.service shows it in cog).
+
+Serves the static page, the local IBM Plex font files, /api/status (JSON, refreshed by a background thread)
+and POST /api/stream/start (starts moonlight-stream.service; systemd then stops the browser).  Stdlib only.
+
+Add a feature: write a probe function, register it in PROBES, read its key in app.js.
+Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
+"""
+import json, os, re, socket, subprocess, sys, threading, time, urllib.request
+import xml.etree.ElementTree as ET
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("PI_DASHBOARD_PORT", "8766"))
+STATIC = os.environ.get("PI_DASHBOARD_DIR", "/usr/local/share/pi-dashboard")
+FONT_DIRS = ["/usr/share/fonts-ibm-plex/woff2", "/usr/share/fonts/truetype/ibm-plex",
+             os.environ.get("PI_DASHBOARD_FONTS", "")]
+LAPTOP = "192.168.0.193"
+SUNSHINE = f"http://{LAPTOP}:47989/serverinfo"
+STREAM_UNIT = "moonlight-stream.service"
+REFRESH_S = 3.0
+MOCK = os.environ.get("PI_DASHBOARD_MOCK")
+
+
+def run(cmd, timeout=2.0):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return None, ""
+
+
+# ---- probes: each returns a JSON-able value or None ----------------------------------------------------
+
+def probe_stream():
+    rc, out = run(["systemctl", "show", STREAM_UNIT,
+                   "-p", "ActiveState,Result,ExecMainStatus,ExecMainExitTimestamp"])
+    if rc is None:
+        return None
+    p = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    active = p.get("ActiveState", "unknown")
+    result = p.get("Result", "")
+    # pi-screen stop / systemctl stop ends as Result=signal or timeout (Moonlight ignores SIGTERM for 5 s,
+    # then SIGKILL); only a non-zero exit (Moonlight patch 0004: connection/launch error) is a failure to start
+    failed = result in ("exit-code", "core-dump")
+    exited = p.get("ExecMainExitTimestamp", "")
+    m = re.search(r"\d\d:\d\d(?=:\d\d)", exited)
+    return {"active": active, "result": result, "status": p.get("ExecMainStatus", ""),
+            "failed": failed, "exited_at": m.group(0) if m else None}
+
+
+def probe_laptop():
+    rc, out = run(["ping", "-n", "-c", "1", "-W", "1", LAPTOP], timeout=3)
+    if rc != 0:
+        return None
+    m = re.search(r"time=([\d.]+) ms", out)
+    return {"rtt_ms": round(float(m.group(1)), 1) if m else None}
+
+
+def probe_sunshine():
+    try:
+        with urllib.request.urlopen(SUNSHINE, timeout=2) as r:
+            root = ET.fromstring(r.read())
+    except Exception:
+        return None
+    get = lambda tag: (root.findtext(tag) or "").strip()
+    return {"hostname": get("hostname"), "state": get("state"), "uniqueid": get("uniqueid")}
+
+
+def probe_pi():
+    rc, out = run(["ip", "-4", "-o", "addr", "show", "eth0"])
+    m = re.search(r"inet ([\d.]+)", out)
+    return {"hostname": socket.gethostname(), "ip": m.group(1) if m else ""}
+
+
+PROBES = {"stream": probe_stream, "laptop": probe_laptop, "sunshine": probe_sunshine}
+STATIC_PROBES = {"pi": probe_pi}          # read once at start
+
+MOCKS = {
+    "ready":      {"laptop": {"rtt_ms": 2.1}, "sunshine": {"hostname": "sallen-laptop", "state": "SUNSHINE_SERVER_FREE"}},
+    "busy":       {"laptop": {"rtt_ms": 2.1}, "sunshine": {"hostname": "sallen-laptop", "state": "SUNSHINE_SERVER_BUSY"}},
+    "nosunshine": {"laptop": {"rtt_ms": 2.1}, "sunshine": None},
+    "away":       {"laptop": None, "sunshine": None},
+    "failed":     {"laptop": {"rtt_ms": 2.1}, "sunshine": {"hostname": "sallen-laptop", "state": "SUNSHINE_SERVER_FREE"},
+                   "stream": {"active": "failed", "result": "exit-code", "status": "1", "failed": True, "exited_at": "22:41"}},
+}
+
+# ---- collector -------------------------------------------------------------------------------------------
+
+state = {"ts": 0}
+state_lock = threading.Lock()
+
+
+def collect():
+    fixed = {k: f() for k, f in STATIC_PROBES.items()}
+    while True:
+        if MOCK:
+            snap = {"stream": {"active": "inactive", "result": "success", "status": "0", "failed": False, "exited_at": None}}
+            snap.update(MOCKS.get(MOCK, MOCKS["ready"]))
+        else:
+            snap = {k: f() for k, f in PROBES.items()}
+        snap.update(fixed)
+        snap["ts"] = time.time()
+        with state_lock:
+            state.clear(); state.update(snap)
+        time.sleep(REFRESH_S)
+
+
+# ---- actions ---------------------------------------------------------------------------------------------
+
+def start_stream():
+    if MOCK:
+        return True, "mock"
+    rc, out = run(["sudo", "-n", "systemctl", "--no-block", "start", STREAM_UNIT], timeout=5)
+    return rc == 0, out
+
+
+# ---- http ------------------------------------------------------------------------------------------------
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=STATIC, **kw)
+
+    def log_message(self, fmt, *args):      # quiet: only errors and actions reach the journal
+        if args and str(args[1]).startswith(("4", "5")):
+            sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+
+    def end_headers(self):                  # the page is edited in place; never let WPE serve a stale copy
+        if not self.path.startswith("/fonts/"):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
+    def send_json(self, obj, code=200):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path.startswith("/api/status"):
+            with state_lock:
+                snap = dict(state)
+            return self.send_json(snap)
+        if self.path.startswith("/fonts/"):
+            name = os.path.basename(self.path.split("?", 1)[0])
+            for d in FONT_DIRS:
+                p = os.path.join(d, name)
+                if d and os.path.isfile(p):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "font/woff2" if name.endswith(".woff2") else "font/ttf")
+                    self.send_header("Content-Length", str(os.path.getsize(p)))
+                    self.send_header("Cache-Control", "max-age=86400")
+                    self.end_headers()
+                    with open(p, "rb") as f:
+                        self.wfile.write(f.read())
+                    return
+            return self.send_error(404, "font not installed (fonts-ibm-plex)")
+        return super().do_GET()
+
+    def do_POST(self):
+        if self.path == "/api/stream/start":
+            ok, out = start_stream()
+            print(f"start stream: {'ok' if ok else 'FAILED ' + out.strip()}", flush=True)
+            return self.send_json({"ok": ok, "detail": out.strip()}, 200 if ok else 500)
+        return self.send_error(404)
+
+
+def main():
+    threading.Thread(target=collect, daemon=True).start()
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    print(f"pi-dashboard-server on 127.0.0.1:{PORT}, static {STATIC}" + (f", mock={MOCK}" if MOCK else ""), flush=True)
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

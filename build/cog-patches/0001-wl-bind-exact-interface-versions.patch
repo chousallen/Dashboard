@@ -1,0 +1,27 @@
+Description: wl platform: do not bind wl_output/zwp_linux_dmabuf at whatever version the compositor offers
+ cog 0.12.1 passes the advertised version straight to wl_registry_bind(). wlroots >= 0.15 (cage 0.1.4
+ on jammy) offers wl_output v4, whose `name`/`description` events have no handler in cog's listener,
+ so libwayland aborts the client with "listener function for opcode 4 of wl_output is NULL".
+ Same change as upstream cog 0.12.3 ("wl: Bind to exact versions of client interfaces",
+ https://github.com/Igalia/cog/commit/d70401fc9ab4290dc2aaed5ff933d7eaf0cc746d).
+Author: room-devices
+Forwarded: not-needed (fixed upstream in 0.12.3)
+--- a/platform/wayland/cog-platform-wl.c	2022-02-25 06:38:05.000000000 +0800
++++ b/platform/wayland/cog-platform-wl.c	2026-10-10 00:25:13.968600529 +0800
+@@ -766,14 +766,14 @@
+             g_warning("Version %d of the zwp_linux_dmabuf_v1 protocol is not supported", version);
+             return;
+         }
+-        wl_data.dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, version);
++        wl_data.dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, MIN(3, version));
+     } else if (strcmp(interface, weston_direct_display_v1_interface.name) == 0) {
+         wl_data.direct_display = wl_registry_bind(registry, name, &weston_direct_display_v1_interface, version);
+     } else if (strcmp(interface, weston_content_protection_interface.name) == 0) {
+         wl_data.protection = wl_registry_bind(registry, name, &weston_content_protection_interface, version);
+ #endif /* COG_ENABLE_WESTON_DIRECT_DISPLAY */
+     } else if (strcmp(interface, wl_output_interface.name) == 0) {
+-        struct wl_output *output = wl_registry_bind(registry, name, &wl_output_interface, version);
++        struct wl_output *output = wl_registry_bind(registry, name, &wl_output_interface, MIN(2, version));
+         wl_output_add_listener(output, &output_listener, NULL);
+         bool inserted = false;
+         for (int i = 0; i < G_N_ELEMENTS(wl_data.metrics); i++) {

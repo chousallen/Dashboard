@@ -1,0 +1,16 @@
+Description: drm platform: include <stdio.h> and <xkbcommon/xkbcommon.h> directly
+ Same transitive-include problem as patch 0002 (libwpewebkit 2.36 headers no longer pull them in):
+ 'stderr' undeclared, XKB_KEY_DOWN/XKB_STATE_MODS_* undeclared. The DRM platform is not used on the Pi 4
+ (black screen, see pi/systemd/pi-dashboard.service) but the package build needs the module.
+Author: room-devices
+--- a/platform/drm/cog-platform-drm.c
++++ b/platform/drm/cog-platform-drm.c
+@@ -7,6 +7,8 @@
+ #include <libinput.h>
+ #include <libudev.h>
++#include <stdio.h>
+ #include <string.h>
+ #include <wayland-server.h>
+ #include <wpe/fdo.h>
++#include <xkbcommon/xkbcommon.h>
+ #include <wpe/fdo-egl.h>

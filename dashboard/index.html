@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi Room</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-state="checking">
+
+<header class="top">
+  <span class="place">Pi Room</span>
+  <time id="clock" datetime=""></time>
+</header>
+
+<main class="hero">
+  <h1 id="state">Checking the laptop</h1>
+  <p id="detail" class="detail">One moment.</p>
+
+  <div id="action" class="action">
+    <kbd data-key="Enter">Enter</kbd>
+    <span id="action-label">Start the stream</span>
+  </div>
+  <p id="note" class="note">While streaming, Ctrl+Alt+Shift+Q on this keyboard ends the stream and brings this screen back.</p>
+</main>
+
+<footer class="bottom">
+  <span class="key-hint"><kbd data-key="r">R</kbd> Check again</span>
+  <span class="key-hint"><kbd>Ctrl+Alt+F3</kbd> Pi console</span>
+  <span id="pi" class="pi"></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

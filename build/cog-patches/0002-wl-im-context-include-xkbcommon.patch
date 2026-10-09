@@ -1,0 +1,14 @@
+Description: wl platform: include xkbcommon.h directly in cog-im-context-wl-v1.c
+ The file uses xkb_mod_mask_t/XKB_MOD_NAME_* but only includes <wpe/webkit.h>; on jammy with
+ libwpe 1.12 / libwpewebkit 2.36 nothing pulls <xkbcommon/xkbcommon.h> in transitively, so a native
+ rebuild fails with "unknown type name 'xkb_mod_mask_t'" (Ubuntu's own build used libwpewebkit 2.34 headers).
+ Same as upstream cog commit 07defeb "Fix missing xkbcommon.h include" (2022-06-14).
+Author: room-devices
+Forwarded: not-needed (fixed upstream)
+--- a/platform/wayland/cog-im-context-wl-v1.c
++++ b/platform/wayland/cog-im-context-wl-v1.c
+@@ -7,3 +7,4 @@
+ 
+ #include "cog-im-context-wl-v1.h"
++#include <xkbcommon/xkbcommon.h>
+ 

@@ -1,0 +1,44 @@
+# Pi Room idle screen: a web page (served by pi-dashboard-server.service) shown full-screen on the HDMI
+# monitor by cog (WPE WebKit) as the single client of cage (a one-window Wayland kiosk compositor on
+# DRM/KMS, no desktop). Replaces the Moonlight menu on tty1.
+# Why cage and not `cog --platform=drm`: cog 0.12.1's own DRM output scans out a tiled buffer the Pi 4
+# display rejects ("failed to schedule a page flip: Invalid argument", meta-webkit #275) - black screen.
+# cage needs the xwayland package installed (jammy's build aborts without /usr/bin/Xwayland) and the locally
+# rebuilt cog (build/cog-pi.sh), because stock 0.12.1 aborts on wlroots' wl_output v4.
+# PAMName=login gives cage a logind session on seat0 (DRM master + libinput keyboard as a non-root user).
+[Unit]
+Description=Pi Room dashboard on the monitor
+# Conflicts= alone gives no ordering; After= makes systemd finish stopping the others before cog opens /dev/dri.
+After=user@1000.service systemd-user-sessions.service pi-dashboard-server.service moonlight.service moonlight-stream.service pi-player.service
+Wants=user@1000.service pi-dashboard-server.service
+Conflicts=getty@tty1.service moonlight.service moonlight-stream.service pi-player.service
+
+[Service]
+User=sallen
+Group=sallen
+SupplementaryGroups=video render input audio
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# tty1 is the foreground VT while the page shows; cage puts the keyboard in K_OFF there, so the kernel
+# ignores Ctrl+Alt+Fx and pi-console-keys.service does the VT switching instead (same as the old menu).
+ExecStartPre=+/usr/bin/chvt 1
+ExecStart=/usr/bin/cage -d -- /usr/bin/cog --platform=wl http://127.0.0.1:8766/
+# Stop cog (cage's child) first: if cage dies first, cog aborts on the lost Wayland socket and the unit ends
+# with Result=core-dump (a core file per stream start). cage exits by itself once its client is gone.
+ExecStop=/bin/sh -c 'pkill -TERM -P $MAINPID; for i in 1 2 3 4 5 6; do kill -0 $MAINPID 2>/dev/null || exit 0; sleep 0.5; done'
+ExecStopPost=+/usr/bin/kbd_mode -u -C /dev/tty1
+# cage 0.1.4 aborts (SIGABRT) while tearing itself down after its client is gone, every time the unit is
+# stopped; harmless, so count it as a clean stop and skip the core dump.
+SuccessExitStatus=ABRT
+LimitCORE=0
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target

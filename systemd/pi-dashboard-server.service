@@ -1,0 +1,16 @@
+# Backend for the Pi Room idle screen: static page + /api/status + /api/stream/start on 127.0.0.1:8766.
+# Always running (it never owns the display), so the page is back instantly when the stream ends.
+[Unit]
+Description=Pi Room dashboard backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sallen
+Group=sallen
+ExecStart=/usr/bin/python3 /usr/local/bin/pi-dashboard-server
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

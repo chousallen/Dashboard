@@ -1,0 +1,138 @@
+/* Pi Room idle screen. One viewer, couch distance, 1920x1080, keyboard only.
+   The background colour is the status; the keycaps are the only outlined things on the page. */
+
+@font-face { font-family: "Plex Serif"; font-weight: 300; src: url("fonts/IBMPlexSerif-Light.woff2") format("woff2"); }
+@font-face { font-family: "Plex Sans";  font-weight: 400; src: url("fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Plex Sans";  font-weight: 500; src: url("fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
+
+:root {
+  --bone: #F2EFE6;
+  --pine: #123F3A;     /* ready */
+  --umber: #4A2E1F;    /* laptop away */
+  --slate: #2B2D42;    /* checking, starting, busy, failed, server unreachable */
+  --bg: var(--slate);
+  --fg: var(--bone);
+  --fg-2: rgba(242, 239, 230, 0.62);
+  --cap-fill: rgba(242, 239, 230, 0.12);
+  --cap-edge: rgba(242, 239, 230, 0.30);
+  --gutter: 6vw;
+  --fade: 400ms;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Plex Sans", "IBM Plex Sans", system-ui, sans-serif;
+  font-size: 28px;
+  line-height: 1.4;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 4vh var(--gutter) 5vh;
+  overflow: hidden;
+  cursor: none;
+  transition: background-color var(--fade) ease;
+}
+
+body[data-state="ready"] { --bg: var(--pine); }
+body[data-state="away"]  { --bg: var(--umber); }
+
+/* top strip */
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 26px;
+  color: var(--fg-2);
+}
+.place { color: var(--fg); font-weight: 500; }
+
+/* hero */
+.hero {
+  align-self: center;
+  max-width: 24ch;
+}
+h1 {
+  font-family: "Plex Serif", "IBM Plex Serif", Georgia, serif;
+  font-weight: 300;
+  font-size: clamp(56px, 7.3vw, 140px);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.detail {
+  margin-top: 0.9em;
+  font-size: 28px;
+  color: var(--fg-2);
+  max-width: 44ch;
+}
+
+.action {
+  margin-top: 2.2em;
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+  font-size: 30px;
+  font-weight: 500;
+}
+.action[hidden] { display: none; }
+.note {
+  margin-top: 0.9em;
+  font-size: 22px;
+  color: var(--fg-2);
+  max-width: 44ch;
+}
+.note[hidden] { display: none; }
+
+/* keycaps: the only outlined element; filled solid while the key is held */
+kbd {
+  display: inline-block;
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 0.8em;
+  line-height: 1;
+  padding: 0.42em 0.6em 0.5em;
+  min-width: 2.4em;
+  text-align: center;
+  color: var(--fg);
+  background: var(--cap-fill);
+  border: 2px solid var(--cap-edge);
+  border-bottom-width: 4px;
+  border-radius: 0.3em;
+  transition: background-color 80ms, color 80ms, transform 80ms;
+}
+kbd.held {
+  background: var(--fg);
+  color: var(--bg);
+  transform: translateY(2px);
+  border-bottom-width: 2px;
+  margin-bottom: 2px;
+}
+
+/* bottom strip */
+.bottom {
+  display: flex;
+  align-items: center;
+  gap: 2.4em;
+  font-size: 22px;
+  color: var(--fg-2);
+}
+.key-hint { display: inline-flex; align-items: center; gap: 0.5em; white-space: nowrap; }
+.pi { margin-left: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  body, kbd { transition: none; }
+}
+
+/* laptop-browser preview at narrow widths */
+@media (max-width: 900px) {
+  :root { --gutter: 16px; }
+  body { font-size: 18px; }
+  .top, .detail, .action, .bottom { font-size: 16px; }
+  .note { font-size: 14px; }
+  .bottom { flex-wrap: wrap; gap: 1em; }
+  .pi { margin-left: 0; width: 100%; }
+}
