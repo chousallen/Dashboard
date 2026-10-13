@@ -1,5 +1,5 @@
 // Pi Room idle screen: polls /api/status and maps it to one of the states below.
-// Keys: Enter = start the stream (or check again when it cannot start), R = check again.
+// Keys: Enter = start the stream (or check again when it cannot start), R = check again, B = monitor off now.
 // After IDLE_MS without a key the page asks the server to switch the monitor off (pi-dashboard-blank.service
 // replaces this browser; any key starts it again). If the server cannot be reached the page goes black itself
 // instead, and then the next key only wakes it (it is not acted on).
@@ -128,6 +128,7 @@ const KEYS = {
     else if (v.enter === "check") checkNow();
   },
   r: () => checkNow(),
+  b: () => idle(),
 };
 
 function capFor(key) {

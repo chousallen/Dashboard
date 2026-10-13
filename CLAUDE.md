@@ -21,7 +21,7 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
 - Page: `dashboard/index.html`, `style.css`, `app.js`. Body `data-state` = checking | ready | away | busy | starting |
   failed; background hue follows it. Keycaps (`<kbd data-key>`) light while held. `describe()` maps status to
   sentence/detail/Enter action; `PROBES` + `describe()` + `KEYS` are the three extension points.
-- Idle: after `IDLE_MS` (`app.js`) without a key the page POSTs `/api/blank`; the server starts
+- Idle: after `IDLE_MS` (`app.js`) without a key, or at once on the B key, the page POSTs `/api/blank`; the server starts
   `pi-dashboard-blank.service` (root), which `Conflicts=` the display units (so cage stops first, and a stream or
   player start stops the watcher; it is deliberately absent from pi-dashboard's `After=`, a mutual `After=` makes
   `systemctl restart pi-dashboard` fail with "Transaction order is cyclic"). The script opens `/dev/dri/card1`,
