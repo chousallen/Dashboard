@@ -10,6 +10,7 @@
 
 <header class="top">
   <span class="place">Pi Room</span>
+  <span id="next-alarm" class="next-alarm"></span>
   <time id="clock" datetime=""></time>
 </header>
 
@@ -24,12 +25,65 @@
   <p id="note" class="note">While streaming, Ctrl+Alt+Shift+Q on this keyboard ends the stream and brings this screen back.</p>
 </main>
 
+<section class="panels">
+  <div class="column">
+    <article class="panel" data-panel="weather">
+      <h2>Rain at Xuefu Village, Da'an</h2>
+      <p class="now"><span id="w-temp" class="big"></span> <span id="w-sky"></span></p>
+      <p id="w-rain" class="line"></p>
+      <div id="w-chart" class="chart" aria-label="Chance of rain per 3 hours"></div>
+      <p id="w-source" class="source"></p>
+    </article>
+    <article class="panel" data-panel="youbike">
+      <h2 id="y-name">YouBike</h2>
+      <p class="now"><span id="y-bikes" class="big"></span> <span id="y-bikes-unit"></span></p>
+      <p id="y-docks" class="line"></p>
+      <p id="y-source" class="source"></p>
+    </article>
+  </div>
+  <article class="panel" data-panel="radar">
+    <h2>Radar echo</h2>
+    <div class="radar">
+      <div id="r-frames" class="frames"></div>
+      <span class="home" title="Xuefu Village"></span>
+      <span id="r-stamp" class="stamp"></span>
+    </div>
+    <p id="r-source" class="source"></p>
+  </article>
+  <article class="panel" data-panel="surface">
+    <h2>Surface weather map</h2>
+    <img id="s-img" class="surface" alt="">
+    <p id="s-source" class="source"></p>
+  </article>
+</section>
+
 <footer class="bottom">
+  <span class="key-hint" data-toggle="weather"><kbd data-key="w">W</kbd> Weather</span>
+  <span class="key-hint" data-toggle="radar"><kbd data-key="e">E</kbd> Radar echo</span>
+  <span class="key-hint" data-toggle="surface"><kbd data-key="s">S</kbd> Surface map</span>
+  <span class="key-hint" data-toggle="youbike"><kbd data-key="y">Y</kbd> YouBike</span>
+  <span class="key-hint"><kbd data-key="a">A</kbd> Alarms</span>
   <span class="key-hint"><kbd data-key="r">R</kbd> Check again</span>
   <span class="key-hint"><kbd data-key="b">B</kbd> Monitor off</span>
   <span class="key-hint"><kbd>Ctrl+Alt+F3</kbd> Pi console</span>
   <span id="pi" class="pi"></span>
 </footer>
+
+<!-- alarm list and editor, opened with A -->
+<div id="alarms" class="sheet" hidden>
+  <div class="card">
+    <h2>Alarms</h2>
+    <ul id="alarm-list" class="alarm-list"></ul>
+    <p id="alarm-help" class="help"></p>
+    <p id="alarm-error" class="error"></p>
+  </div>
+</div>
+
+<!-- shown while an alarm rings -->
+<div id="ringing" class="ringing" hidden>
+  <p class="ring-time" id="ring-time"></p>
+  <p class="ring-help">Press any key to stop the alarm</p>
+</div>
 
 <script src="app.js"></script>
 </body>

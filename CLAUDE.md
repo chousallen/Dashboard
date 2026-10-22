@@ -65,9 +65,30 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
 - Verified on the monitor 2026-10-10: fonts, R, Enter -> stream, Ctrl+Alt+Shift+Q -> dashboard back by itself,
   Ctrl+Alt+F3/F1. Untested: appearance at boot without a login (both units enabled, `graphical.target`).
 
+## Outside data (2026-10-23)
+- CWA key: `~/.config/pi-dashboard/cwa.key`. `F-D0047-061` (Taipei districts, 3 days) with `LocationName=大安區`:
+  path `records.Locations[0].Location[0].WeatherElement[]`, `ElementName` in Chinese (`溫度` hourly `DataTime`,
+  `3小時降雨機率` / `天氣現象` with `StartTime`/`EndTime`), values are strings. Station `A0A010` 臺灣大學 (0.8 km) is in
+  both `O-A0001-001` (`WeatherElement.AirTemperature`) and `O-A0002-001` (`RainfallElement.Now` = since midnight,
+  `Past1hr`, ...); `-99` = no data.
+- Radar: `https://www.cwa.gov.tw/Data/radar/CV1_TW_3600_YYYYMMDDHHMM.png` (10-min frames, past hour fetchable, no
+  key); newest time from `cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-003.json`. 3600x3600,
+  lon 118-124, lat 20.5-26.5, linear (600 px/degree, checked against the Wufenshan radar dot). ffmpeg crops it (no
+  PIL on the Pi). Surface map: `https://www.cwa.gov.tw/Data/fcst_img/SFCcombo.jpg` (728x531, `Last-Modified` = upload,
+  the analysis time is only printed on the image).
+- YouBike: `tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json`, flat array, `sno` 500101031 =
+  臺大男七舍前; fields `available_rent_bikes`, `available_return_bikes`, `Quantity`, `mday`. At 04:2x on 2026-10-23 it
+  reported 0 bikes and 0 docks for all 1822 stations (feed-side, not ours).
+
 ## Commands
 - State: `systemctl is-active pi-dashboard pi-dashboard-server moonlight-stream`; `curl -s 127.0.0.1:8766/api/status`.
-- Logs: `journalctl -u pi-dashboard` (cage + cog), `journalctl -u pi-dashboard-server` ("start stream: ok").
+- Logs: `journalctl -u pi-dashboard` (cage + cog), `journalctl -u pi-dashboard-server` ("start stream: ok", "feed
+  radar: ...", "alarm 07:30: ringing").
+- Screenshot of the monitor (cage offers screencopy): `XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim
+  -s 0.5 out.png`. The page must be reloaded to pick up new files: `sudo systemctl restart pi-dashboard`.
+- Test an alarm without noise: runtime drop-in `/run/systemd/system/pi-dashboard-server.service.d/x.conf` with
+  `Environment=PI_DASHBOARD_ALARM_SOUND=<silent.wav>`, daemon-reload, restart the server, `pi-alarm test`; remove it after.
+  The server needs `XDG_RUNTIME_DIR=/run/user/1000` (in its unit) for paplay to reach sallen's PipeWire.
 - Show the dashboard (stops a running stream): `sudo systemctl start pi-dashboard`. Old Moonlight GUI: `sudo systemctl start moonlight`.
 - Is cage drawing: `sudo cat /sys/kernel/debug/dri/1/framebuffer | grep -E 'allocated|modifier'` shows `cage` with `modifier=0x0`.
 - Monitor state: `cat /sys/class/drm/card1-HDMI-A-1/enabled` (`disabled` while pi-dashboard-blank is active) and

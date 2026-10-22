@@ -12,6 +12,9 @@ pi-dashboard-server.service    python3 bin/pi-dashboard-server
                                GET /api/status  stream unit state, laptop ping, Sunshine state
                                POST /api/stream/start   sudo systemctl --no-block start moonlight-stream
                                POST /api/blank          sudo systemctl --no-block start pi-dashboard-blank
+                               GET /img/radar0..5, /img/surface   cached CWA images
+                               GET/POST/DELETE /api/alarms, POST /api/alarm/stop|test, POST /api/prefs
+bin/pi-alarm                   command-line client for the alarms
 pi-dashboard-blank.service     stops cage, holds DRM master with the CRTCs off (monitor asleep), any key -> pi-dashboard
 ```
 
@@ -22,10 +25,21 @@ quits it and the dashboard comes back by itself. After 10 minutes without a key 
 off; any key brings the dashboard back (that key does nothing else). **Ctrl+Alt+F3** text console, **Ctrl+Alt+F1**
 dashboard (handled by `pi-console-keys` from the room-devices repo, not by the page).
 
+Panels (each one shown or hidden with its key; the choice survives restarts):
+**W** weather (CWA forecast for Da'an District, rain chance per 3 hours; temperature and rain measured at the
+NTU station), **E** radar echo (last hour, 10-minute steps, northern Taiwan, dot = Xuefu Village), **S** surface
+weather map, **Y** YouBike at NTU 7th Men's Dorm. With every panel hidden the page looks as before.
+
+Alarms: **A** opens the list (arrows choose, Enter changes or adds, Space on/off, Delete removes, Esc closes).
+From a shell: `pi-alarm`, `pi-alarm add 07:30 weekdays`, `pi-alarm off 1`, `pi-alarm rm 1`, `pi-alarm stop`,
+`pi-alarm test` (rings now). A ringing alarm plays on the 3.5 mm speaker, switches the monitor back on (unless the
+stream or the player is using it), and stops on any key or after 10 minutes.
+
 ## Install
 
 On the Pi: `build/cog-pi.sh` once (rebuilds Ubuntu's `cog` browser with three small patches, see
-`build/cog-patches/`), then `./install.sh`. The room-devices repo must be installed as well: its
+`build/cog-patches/`), then `./install.sh`. The weather panel needs a CWA (Central Weather Administration)
+open-data key in `~/.config/pi-dashboard/cwa.key` (one line, mode 600, never in git). The room-devices repo must be installed as well: its
 `moonlight-stream.service` / `pi-player.service` hand the screen back to `pi-dashboard.service`,
 and its `pi-console-keys` treats the dashboard as the idle unit.
 

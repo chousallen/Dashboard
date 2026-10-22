@@ -6,10 +6,16 @@ POST /api/stream/start (starts moonlight-stream.service; systemd then stops the 
 pi-dashboard-blank.service: stops the browser, holds DRM master with every CRTC off = monitor asleep, any key
 brings the dashboard back).  Stdlib only.
 
+Outside data (FEEDS, each on its own interval, last good value kept on error): CWA (Central Weather Administration)
+township forecast for Da'an and the NTU station's observation (key in ~/.config/pi-dashboard/cwa.key), the CWA radar
+echo and surface weather map images (served from memory at /img/<name>), YouBike 2.0 Taipei availability.
+Alarms: ~/.config/pi-dashboard/alarms.json, GET/POST /api/alarms (bin/pi-alarm is the command-line client); a ringing
+alarm plays ALARM_SOUND on the default PulseAudio sink (the 3.5 mm jack) and brings the dashboard back on the monitor.
+
 Add a feature: write a probe function, register it in PROBES, read its key in app.js.
 Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
 """
-import json, os, re, socket, subprocess, sys, threading, time, urllib.request
+import datetime, json, os, re, socket, subprocess, sys, threading, time, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -20,9 +26,27 @@ FONT_DIRS = ["/usr/share/fonts-ibm-plex/woff2", "/usr/share/fonts/truetype/ibm-p
 LAPTOP = "192.168.0.193"
 SUNSHINE = f"http://{LAPTOP}:47989/serverinfo"
 STREAM_UNIT = "moonlight-stream.service"
+DASHBOARD_UNIT = "pi-dashboard.service"
 BLANK_UNIT = "pi-dashboard-blank.service"
 REFRESH_S = 3.0
 MOCK = os.environ.get("PI_DASHBOARD_MOCK")
+CONF = os.path.expanduser(os.environ.get("PI_DASHBOARD_CONF", "~/.config/pi-dashboard"))
+CWA_API = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
+CWA_TOWN = "大安區"                 # Xuefu Village (學府里) is in Da'an; the forecast is per district
+CWA_STATION = "A0A010"             # 臺灣大學 (NTU) weather + rain station, 0.8 km from the dorms
+YOUBIKE_URL = "https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json"
+YOUBIKE_STATION = "500101031"      # YouBike2.0_臺大男七舍前 (NTU 7th Men's Dorm), Changxing St.
+RADAR_JSON = "https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-003.json"
+RADAR_FRAME = "https://www.cwa.gov.tw/Data/radar/CV1_TW_3600_{:%Y%m%d%H%M}.png"   # past frames, every 10 min
+RADAR_FRAMES = 6                   # last hour, played as a loop
+# The 3600x3600 frame covers lon 118-124 E, lat 20.5-26.5 N linearly (600 px per degree). Crop 2x2 degrees centred on
+# Xuefu Village (25.017 N, 121.545 E), so the page puts its marker in the middle.
+HOME = (25.017, 121.545)
+RADAR_CROP = "crop=1200:1200:{}:{},scale=600:600".format(round((HOME[1] - 1 - 118) * 600), round((26.5 - HOME[0] - 1) * 600))
+SURFACE_MAP = "https://www.cwa.gov.tw/Data/fcst_img/SFCcombo.jpg"                 # 地面天氣圖, every 6 h
+ALARM_SOUND = os.environ.get("PI_DASHBOARD_ALARM_SOUND", "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga")
+ALARM_RING_S = 10 * 60             # a ringing alarm stops by itself after this long
+DISPLAY_UNITS = ("moonlight.service", "moonlight-stream.service", "pi-player.service")  # an alarm never stops these
 
 
 def run(cmd, timeout=2.0):
@@ -76,8 +100,123 @@ def probe_pi():
     return {"hostname": socket.gethostname(), "ip": m.group(1) if m else ""}
 
 
+# ---- feeds: outside data, fetched less often than the probes ---------------------------------------------
+# Each feed returns a JSON-able value (kept in state[name]) and may store images in `images`.
+
+images = {}                              # name -> (bytes, content type, time string shown on the page)
+images_lock = threading.Lock()
+
+
+def fetch(url, timeout=15):
+    req = urllib.request.Request(url, headers={"User-Agent": "pi-dashboard"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def cwa(dataset, **params):
+    with open(os.path.join(CONF, "cwa.key")) as f:
+        params["Authorization"] = f.read().strip()
+    d = json.loads(fetch(CWA_API + dataset + "?" + urllib.parse.urlencode(params)))
+    if d.get("success") != "true":
+        raise RuntimeError(f"CWA {dataset}: success={d.get('success')}")
+    return d["records"]
+
+
+def hhmm(iso):
+    return iso[11:16]
+
+
+def feed_weather():
+    loc = cwa("F-D0047-061", LocationName=CWA_TOWN)["Locations"][0]["Location"][0]
+    el = {e["ElementName"]: e["Time"] for e in loc["WeatherElement"]}
+    now = datetime.datetime.now().astimezone().isoformat()
+    # 3-hour slots that have not ended yet, next 24 h
+    slots = []
+    for t in el["3小時降雨機率"]:
+        if t["EndTime"] <= now:
+            continue
+        slots.append({"start": t["StartTime"], "end": t["EndTime"],
+                      "pop": int(t["ElementValue"][0]["ProbabilityOfPrecipitation"])})
+        if len(slots) == 8:
+            break
+    wx = {t["StartTime"]: t["ElementValue"][0]["Weather"] for t in el["天氣現象"]}
+    temps = {t["DataTime"]: int(t["ElementValue"][0]["Temperature"]) for t in el["溫度"]}
+    for s in slots:
+        s["weather"] = wx.get(s["start"], "")
+        s["temp"] = temps.get(s["start"])
+        s["label"] = hhmm(s["start"])
+    st = cwa("O-A0001-001", StationId=CWA_STATION)["Station"][0]
+    rain = cwa("O-A0002-001", StationId=CWA_STATION)["Station"][0]["RainfallElement"]
+    num = lambda v: None if v is None or float(v) < -90 else float(v)       # -99 = no data
+    w = st["WeatherElement"]
+    return {
+        "town": CWA_TOWN,
+        "slots": slots,
+        "obs": {"station": st["StationName"], "time": hhmm(st["ObsTime"]["DateTime"]),
+                "weather": w.get("Weather", ""), "temp": num(w.get("AirTemperature")),
+                "humidity": num(w.get("RelativeHumidity")),
+                "rain_today": num(rain["Now"]["Precipitation"]),
+                "rain_1h": num(rain["Past1hr"]["Precipitation"]),
+                "rain_10min": num(rain["Past10Min"]["Precipitation"]),
+            },
+    }
+
+
+radar_cache = {}                         # frame time -> cropped PNG bytes
+
+
+def feed_radar():
+    meta = json.loads(fetch(RADAR_JSON))["cwaopendata"]["dataset"]["DateTime"]
+    latest = datetime.datetime.fromisoformat(meta).replace(tzinfo=None)
+    frames = []
+    for i in reversed(range(RADAR_FRAMES)):
+        t = latest - datetime.timedelta(minutes=10 * i)
+        if t not in radar_cache:
+            try:
+                raw = fetch(RADAR_FRAME.format(t), timeout=30)
+            except Exception as e:
+                print(f"radar frame {t:%H:%M}: {e}", flush=True)
+                continue
+            r = subprocess.run(["ffmpeg", "-v", "error", "-i", "-", "-vf", RADAR_CROP, "-f", "image2pipe",
+                                "-vcodec", "png", "-"], input=raw, capture_output=True, timeout=60)
+            if r.returncode != 0:
+                raise RuntimeError("ffmpeg: " + r.stderr.decode().strip()[-200:])
+            radar_cache[t] = r.stdout
+        frames.append(t)
+    for t in [t for t in radar_cache if t not in frames]:
+        del radar_cache[t]
+    with images_lock:
+        for i, t in enumerate(frames):
+            images[f"radar{i}"] = (radar_cache[t], "image/png", f"{t:%H:%M}")
+    if not frames:
+        raise RuntimeError("no radar frame could be fetched")
+    return {"frames": [{"src": f"/img/radar{i}?t={t:%H%M}", "time": f"{t:%H:%M}"} for i, t in enumerate(frames)]}
+
+
+def feed_surface():
+    req = urllib.request.Request(SURFACE_MAP, headers={"User-Agent": "pi-dashboard"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        raw, modified = r.read(), r.headers.get("Last-Modified")
+    t = datetime.datetime.strptime(modified, "%a, %d %b %Y %H:%M:%S GMT").replace(
+        tzinfo=datetime.timezone.utc).astimezone() if modified else datetime.datetime.now()
+    with images_lock:
+        images["surface"] = (raw, "image/jpeg", f"{t:%H:%M}")
+    return {"src": f"/img/surface?t={t:%d%H%M}", "time": f"{t:%a %H:%M}"}
+
+
+def feed_youbike():
+    for s in json.loads(fetch(YOUBIKE_URL)):
+        if s["sno"] == YOUBIKE_STATION:
+            return {"name": s["snaen"].replace("YouBike2.0_", ""), "bikes": s["available_rent_bikes"],
+                    "docks": s["available_return_bikes"], "total": s["Quantity"], "active": s["act"] == "1",
+                    "time": s["mday"][11:16]}
+    raise RuntimeError(f"YouBike station {YOUBIKE_STATION} not in the feed")
+
+
 PROBES = {"stream": probe_stream, "laptop": probe_laptop, "sunshine": probe_sunshine}
 STATIC_PROBES = {"pi": probe_pi}          # read once at start
+FEEDS = {"weather": (feed_weather, 600), "youbike": (feed_youbike, 60), "radar": (feed_radar, 300),
+         "surface": (feed_surface, 1800)}    # name -> (function, seconds)
 
 MOCKS = {
     "ready":      {"laptop": {"rtt_ms": 2.1}, "sunshine": {"hostname": "sallen-laptop", "state": "SUNSHINE_SERVER_FREE"}},
@@ -88,7 +227,7 @@ MOCKS = {
                    "stream": {"active": "failed", "result": "exit-code", "status": "1", "failed": True, "exited_at": "22:41"}},
 }
 
-# ---- collector -------------------------------------------------------------------------------------------
+# ---- collectors -------------------------------------------------------------------------------------------
 
 state = {"ts": 0}
 state_lock = threading.Lock()
@@ -105,8 +244,181 @@ def collect():
         snap.update(fixed)
         snap["ts"] = time.time()
         with state_lock:
-            state.clear(); state.update(snap)
+            state.update(snap)
         time.sleep(REFRESH_S)
+
+
+def collect_feeds():
+    """One thread for all outside data: each feed runs when due; on error the last good value stays, with the error."""
+    due = {name: 0 for name in FEEDS}
+    while True:
+        for name, (fn, every) in FEEDS.items():
+            if time.time() < due[name]:
+                continue
+            due[name] = time.time() + every
+            try:
+                value, err = fn(), None
+            except Exception as e:
+                value, err = None, f"{type(e).__name__}: {e}"
+                due[name] = time.time() + min(every, 60)       # retry a failed feed sooner
+                print(f"feed {name}: {err}", flush=True)
+            with state_lock:
+                old = state.get(name) or {}
+                if value is not None:
+                    state[name] = {"data": value, "at": time.time(), "error": None}
+                else:
+                    state[name] = {"data": old.get("data"), "at": old.get("at"), "error": err}
+        time.sleep(1)
+
+
+# ---- alarms ----------------------------------------------------------------------------------------------
+# alarms.json: [{"id": 1, "time": "07:30", "repeat": "once|daily|weekdays|weekends", "on": true}]
+
+REPEAT_DAYS = {"once": range(7), "daily": range(7), "weekdays": range(5), "weekends": (5, 6)}
+alarm_lock = threading.Lock()
+ringing = None                           # {"id", "time", "since"} while an alarm rings
+ring_stop = threading.Event()
+
+
+def alarms_path():
+    return os.path.join(CONF, "alarms.json")
+
+
+def load_alarms():
+    try:
+        with open(alarms_path()) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except ValueError as e:              # a hand-edited, broken file must not stop the scheduler or /api/status
+        print(f"alarms.json unreadable ({e}); treating it as empty", flush=True)
+        return []
+
+
+def save_alarms(alarms):
+    os.makedirs(CONF, exist_ok=True)
+    tmp = alarms_path() + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(alarms, f, indent=1)
+    os.replace(tmp, alarms_path())
+
+
+def next_ring(a, now):
+    h, m = map(int, a["time"].split(":"))
+    for d in range(8):
+        t = (now + datetime.timedelta(days=d)).replace(hour=h, minute=m, second=0, microsecond=0)
+        if t > now and t.weekday() in REPEAT_DAYS[a["repeat"]]:
+            return t
+    return None
+
+
+def alarm_view():
+    now = datetime.datetime.now()
+    with alarm_lock:
+        alarms = load_alarms()
+        ring = dict(ringing) if ringing else None
+    out = []
+    for a in sorted(alarms, key=lambda a: a["time"]):
+        t = next_ring(a, now) if a["on"] else None
+        out.append(dict(a, next=t.strftime("%a %H:%M") if t else None, next_ts=t.timestamp() if t else None))
+    upcoming = [a for a in out if a["next_ts"]]
+    return {"alarms": out, "ringing": ring, "next": min(upcoming, key=lambda a: a["next_ts"]) if upcoming else None}
+
+
+def check_alarm(body):
+    """Validate a POSTed alarm (or part of one); return the clean fields or raise ValueError."""
+    clean = {}
+    if "time" in body:
+        m = re.fullmatch(r"(\d{1,2}):(\d\d)", str(body["time"]))
+        if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+            raise ValueError("time must be HH:MM, 00:00 to 23:59")
+        clean["time"] = "%02d:%s" % (int(m.group(1)), m.group(2))
+    if "repeat" in body:
+        if body["repeat"] not in REPEAT_DAYS:
+            raise ValueError("repeat must be one of " + ", ".join(REPEAT_DAYS))
+        clean["repeat"] = body["repeat"]
+    if "on" in body:
+        clean["on"] = bool(body["on"])
+    return clean
+
+
+def ring(alarm):
+    global ringing
+    with alarm_lock:
+        if ringing:
+            return
+        ringing = {"id": alarm.get("id"), "time": alarm["time"], "since": time.time()}
+    ring_stop.clear()
+    print(f"alarm {alarm['time']}: ringing", flush=True)
+    # bring the page back unless the stream or the player owns the monitor (pi-dashboard Conflicts= the blank unit)
+    rc, out = run(["systemctl", "is-active", *DISPLAY_UNITS])
+    if "active" not in out.split():
+        start_unit(DASHBOARD_UNIT)
+    threading.Thread(target=play, daemon=True).start()
+
+
+def play():
+    global ringing
+    while not ring_stop.is_set() and time.time() - ringing["since"] < ALARM_RING_S:
+        try:
+            p = subprocess.Popen(["paplay", ALARM_SOUND], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except OSError as e:
+            print(f"alarm sound: {e}", flush=True); break
+        while p.poll() is None and not ring_stop.wait(0.2):
+            pass
+        if p.poll() is None:
+            p.terminate()
+        elif p.returncode != 0:
+            print(f"alarm sound: paplay exit {p.returncode}: {p.stderr.read().decode().strip()}", flush=True)
+            ring_stop.wait(2)
+    with alarm_lock:
+        ringing = None
+    print("alarm: stopped", flush=True)
+
+
+def stop_ring():
+    ring_stop.set()
+    for _ in range(20):                  # let play() clear `ringing`, so the reply already shows it stopped
+        if not ringing:
+            break
+        time.sleep(0.05)
+
+
+def alarm_loop():
+    last = None
+    while True:
+        now = datetime.datetime.now()
+        minute = now.strftime("%H:%M")
+        if minute != last:
+            last = minute
+            with alarm_lock:
+                alarms = load_alarms()
+                due = [a for a in alarms if a["on"] and a["time"] == minute
+                       and now.weekday() in REPEAT_DAYS[a["repeat"]]]
+                for a in due:
+                    if a["repeat"] == "once":
+                        a["on"] = False
+                if any(a["repeat"] == "once" for a in due):
+                    save_alarms(alarms)
+            if due:
+                ring(due[0])                 # one sound for every alarm set to this minute
+        time.sleep(1)
+
+
+# ---- panel choices (which panels the page hides), kept across restarts ----------------------------------
+
+def load_prefs():
+    try:
+        with open(os.path.join(CONF, "prefs.json")) as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {"hidden": []}
+
+
+def save_prefs(prefs):
+    os.makedirs(CONF, exist_ok=True)
+    with open(os.path.join(CONF, "prefs.json"), "w") as f:
+        json.dump(prefs, f)
 
 
 # ---- actions ---------------------------------------------------------------------------------------------
@@ -145,7 +457,22 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path.startswith("/api/status"):
             with state_lock:
                 snap = dict(state)
+            snap["alarm"] = alarm_view()
+            snap["prefs"] = load_prefs()
             return self.send_json(snap)
+        if self.path.startswith("/api/alarms"):
+            return self.send_json(alarm_view())
+        if self.path.startswith("/img/"):
+            with images_lock:
+                img = images.get(self.path[5:].split("?", 1)[0])
+            if not img:
+                return self.send_error(404, "image not fetched yet")
+            self.send_response(200)
+            self.send_header("Content-Type", img[1])
+            self.send_header("Content-Length", str(len(img[0])))
+            self.end_headers()
+            self.wfile.write(img[0])
+            return
         if self.path.startswith("/fonts/"):
             name = os.path.basename(self.path.split("?", 1)[0])
             for d in FONT_DIRS:
@@ -162,12 +489,66 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_error(404, "font not installed (fonts-ibm-plex)")
         return super().do_GET()
 
+    def body(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(n) or b"{}") if n else {}
+
     def do_POST(self):
         if self.path == "/api/stream/start":
+            if ringing:                      # Enter pressed before the page's next poll saw the alarm
+                stop_ring()
+                return self.send_json({"ok": False, "detail": "alarm was ringing; stopped it instead"}, 409)
             return self.start("start stream", STREAM_UNIT)
         if self.path == "/api/blank":
             return self.start("blank", BLANK_UNIT)
+        if self.path == "/api/alarm/stop":
+            stop_ring()
+            return self.send_json(alarm_view())
+        if self.path == "/api/alarm/test":
+            ring({"id": None, "time": datetime.datetime.now().strftime("%H:%M")})
+            return self.send_json(alarm_view())
+        if self.path == "/api/prefs":
+            save_prefs({"hidden": [str(x) for x in self.body().get("hidden", [])]})
+            return self.send_json(load_prefs())
+        m = re.fullmatch(r"/api/alarms(?:/(\d+))?", self.path)
+        if m:
+            return self.edit_alarm(int(m.group(1)) if m.group(1) else None)
         return self.send_error(404)
+
+    def do_DELETE(self):
+        m = re.fullmatch(r"/api/alarms/(\d+)", self.path)
+        if not m:
+            return self.send_error(404)
+        with alarm_lock:
+            alarms = load_alarms()
+            left = [a for a in alarms if a["id"] != int(m.group(1))]
+            if len(left) == len(alarms):
+                return self.send_json({"error": f"no alarm {m.group(1)}"}, 404)
+            save_alarms(left)
+        return self.send_json(alarm_view())
+
+    def edit_alarm(self, aid):
+        """POST /api/alarms {time, repeat} adds one; POST /api/alarms/<id> {time?, repeat?, on?} changes one."""
+        try:
+            clean = check_alarm(self.body())
+        except ValueError as e:
+            return self.send_json({"error": str(e)}, 400)
+        with alarm_lock:
+            alarms = load_alarms()
+            if aid is None:
+                if "time" not in clean:
+                    return self.send_json({"error": "time is required"}, 400)
+                a = {"id": max([a["id"] for a in alarms], default=0) + 1, "repeat": "once", "on": True}
+                a.update(clean)
+                alarms.append(a)
+            else:
+                hit = [a for a in alarms if a["id"] == aid]
+                if not hit:
+                    return self.send_json({"error": f"no alarm {aid}"}, 404)
+                hit[0].update(clean)
+            save_alarms(alarms)
+        print(f"alarms: {'added' if aid is None else 'changed ' + str(aid)} {clean}", flush=True)
+        return self.send_json(alarm_view())
 
     def start(self, what, unit):
         ok, out = start_unit(unit)
@@ -177,6 +558,8 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     threading.Thread(target=collect, daemon=True).start()
+    threading.Thread(target=collect_feeds, daemon=True).start()
+    threading.Thread(target=alarm_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"pi-dashboard-server on 127.0.0.1:{PORT}, static {STATIC}" + (f", mock={MOCK}" if MOCK else ""), flush=True)
     srv.serve_forever()

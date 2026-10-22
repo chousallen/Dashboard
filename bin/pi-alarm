@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Set the Pi Room alarms from a shell (the same alarms as the A key on the dashboard).
+
+  pi-alarm                              list the alarms
+  pi-alarm add 07:30 [once|daily|weekdays|weekends]   (default: once)
+  pi-alarm on ID | off ID | rm ID
+  pi-alarm set ID 07:45 [repeat]        change time (and repeat) of one alarm
+  pi-alarm stop                         stop a ringing alarm
+  pi-alarm test                         ring now (stop it with any key on the Pi keyboard, or pi-alarm stop)
+
+Talks to pi-dashboard-server on 127.0.0.1:8766, which keeps the alarms in ~/.config/pi-dashboard/alarms.json and
+rings them on the 3.5 mm speaker.  Stdlib only.
+"""
+import json, os, sys, urllib.error, urllib.request
+
+BASE = "http://127.0.0.1:%s" % os.environ.get("PI_DASHBOARD_PORT", "8766")
+REPEATS = {"once": "Once", "daily": "Every day", "weekdays": "Mon-Fri", "weekends": "Sat-Sun"}
+
+
+def api(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, method=method, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        sys.exit("pi-alarm: " + json.loads(e.read() or b"{}").get("error", str(e)))
+    except urllib.error.URLError as e:
+        sys.exit(f"pi-alarm: cannot reach pi-dashboard-server at {BASE} ({e.reason}); is pi-dashboard-server.service running?")
+
+
+def show(v):
+    if not v["alarms"]:
+        print("no alarms")
+    for a in v["alarms"]:
+        state = "on,  next " + a["next"] if a["on"] else "off"
+        print(f"{a['id']:>3}  {a['time']}  {REPEATS[a['repeat']]:<9}  {state}")
+    if v["ringing"]:
+        print(f"ringing now: {v['ringing']['time']}  (pi-alarm stop)")
+
+
+def main(argv):
+    if not argv or argv[0] in ("list", "ls"):
+        return show(api("GET", "/api/alarms"))
+    cmd, args = argv[0], argv[1:]
+    if cmd == "add" and 1 <= len(args) <= 2:
+        return show(api("POST", "/api/alarms", {"time": args[0], "repeat": args[1] if len(args) > 1 else "once"}))
+    if cmd == "set" and 2 <= len(args) <= 3:
+        body = {"time": args[1], "on": True}
+        if len(args) > 2:
+            body["repeat"] = args[2]
+        return show(api("POST", "/api/alarms/" + args[0], body))
+    if cmd in ("on", "off") and len(args) == 1:
+        return show(api("POST", "/api/alarms/" + args[0], {"on": cmd == "on"}))
+    if cmd in ("rm", "del") and len(args) == 1:
+        return show(api("DELETE", "/api/alarms/" + args[0]))
+    if cmd in ("stop", "test") and not args:
+        return show(api("POST", "/api/alarm/" + cmd))
+    sys.exit(__doc__.strip().split("\n\n")[1])
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
