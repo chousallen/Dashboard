@@ -374,6 +374,8 @@ function setBlank(on) {
 async function idle() {
   try {
     const r = await fetch("/api/blank", { method: "POST" });
+    // 409: a Pi console is in front of the page (Ctrl+Alt+F3..F6); leave the monitor on and wait another IDLE_MS
+    if (r.status === 409) return touch();
     if (!r.ok) throw new Error("HTTP " + r.status);
     // systemd now stops this browser and blanks the console; nothing more to do here
   } catch (e) {

@@ -423,6 +423,18 @@ def save_prefs(prefs):
 
 # ---- actions ---------------------------------------------------------------------------------------------
 
+def dashboard_in_front():
+    # Ctrl+Alt+F3..F6 (pi-console-keys) shows a Pi console while cage keeps running on tty1; the page then sees no
+    # keys, and blanking would take the monitor away from the console.
+    if MOCK:
+        return True
+    try:
+        with open("/sys/class/tty/tty0/active") as f:
+            return f.read().strip() == "tty1"
+    except OSError:
+        return True
+
+
 def start_unit(unit):
     if MOCK:
         return True, "mock"
@@ -500,6 +512,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json({"ok": False, "detail": "alarm was ringing; stopped it instead"}, 409)
             return self.start("start stream", STREAM_UNIT)
         if self.path == "/api/blank":
+            if not dashboard_in_front():
+                print("blank: refused, a console is in front", flush=True)
+                return self.send_json({"ok": False, "detail": "a console is in front"}, 409)
             return self.start("blank", BLANK_UNIT)
         if self.path == "/api/alarm/stop":
             stop_ring()

@@ -42,6 +42,11 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
   nothing (`dpms` stays `On`). `systemctl stop moonlight-stream pi-dashboard` in one command fails with
   "Transaction order is cyclic" (the stream's `ExecStopPost` starts the dashboard); stop them one at a time.
 
+- Ctrl+Alt+F3..F6 on the dashboard (`pi-console-keys`, ~/room-devices) shows a Pi console while cage + cog keep running
+  on tty1 (logind moves DRM master); Ctrl+Alt+F1 returns to the same page. While a console is in front the page gets
+  no keys, so `/api/blank` answers 409 unless `/sys/class/tty/tty0/active` is `tty1`, and `app.js` then restarts its
+  idle timer instead of going black.
+
 ## Facts learned (2026-10-09/10)
 - `cog --platform=drm` is a dead end on the Pi 4: cog 0.12.1 becomes DRM master and loads the page, but the first
   commit fails ("failed to schedule a page flip: Invalid argument") because its buffer is AR24 with modifier
