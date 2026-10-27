@@ -45,7 +45,7 @@ RADAR_FRAMES = 6                   # last hour, played as a loop
 HOME = (25.017, 121.545)
 RADAR_CROP = "crop=1200:1200:{}:{},scale=600:600".format(round((HOME[1] - 1 - 118) * 600), round((26.5 - HOME[0] - 1) * 600))
 SURFACE_MAP = "https://www.cwa.gov.tw/Data/fcst_img/SFCcombo.jpg"                 # 地面天氣圖, every 6 h
-ALARM_SOUND = os.environ.get("PI_DASHBOARD_ALARM_SOUND", "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga")
+ALARM_SOUND = os.environ.get("PI_DASHBOARD_ALARM_SOUND", f"{STATIC}/alarm-chime.wav")   # made by bin/pi-alarm-chime
 ALARM_RING_S = 10 * 60             # a ringing alarm stops by itself after this long
 DISPLAY_UNITS = ("moonlight.service", "moonlight-stream.service", "pi-player.service")  # an alarm never stops these
 

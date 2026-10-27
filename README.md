@@ -15,6 +15,7 @@ pi-dashboard-server.service    python3 bin/pi-dashboard-server
                                GET /img/radar0..5, /img/surface   cached CWA images
                                GET/POST/DELETE /api/alarms, POST /api/alarm/stop|test, POST /api/prefs
 bin/pi-alarm                   command-line client for the alarms
+bin/pi-alarm-chime             writes the alarm sound (soft marimba phrase, WAV); install.sh runs it
 pi-dashboard-blank.service     stops cage, holds DRM master with the CRTCs off (monitor asleep), any key -> pi-dashboard
 ```
 
