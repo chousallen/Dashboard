@@ -140,8 +140,10 @@ function renderYoubike(f) {
   const d = f.data;
   $("y-name").textContent = "YouBike at " + d.name;
   $("y-bikes").textContent = d.bikes;
-  $("y-bikes-unit").textContent = d.bikes === 1 ? "bike to rent" : "bikes to rent";
-  $("y-docks").textContent = d.active ? d.docks + " empty docks, " + d.total + " in all" : "Station closed";
+  $("y-bikes-unit").textContent = d.bikes === 1 ? "normal bike to rent" : "normal bikes to rent";
+  $("y-docks").textContent = d.active
+    ? d.ebikes + (d.ebikes === 1 ? " electric bike, " : " electric bikes, ") + d.docks + " empty docks, " + d.total + " in all"
+    : "Station closed";
 }
 
 function renderRadar(f) {

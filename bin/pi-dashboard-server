@@ -8,14 +8,14 @@ brings the dashboard back).  Stdlib only.
 
 Outside data (FEEDS, each on its own interval, last good value kept on error): CWA (Central Weather Administration)
 township forecast for Da'an and the NTU station's observation (key in ~/.config/pi-dashboard/cwa.key), the CWA radar
-echo and surface weather map images (served from memory at /img/<name>), YouBike 2.0 Taipei availability.
+echo and surface weather map images (served from memory at /img/<name>), YouBike 2.0 normal and electric bikes.
 Alarms: ~/.config/pi-dashboard/alarms.json, GET/POST /api/alarms (bin/pi-alarm is the command-line client); a ringing
 alarm plays ALARM_SOUND on the default PulseAudio sink (the 3.5 mm jack) and brings the dashboard back on the monitor.
 
 Add a feature: write a probe function, register it in PROBES, read its key in app.js.
 Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
 """
-import datetime, json, os, re, socket, subprocess, sys, threading, time, urllib.parse, urllib.request
+import datetime, gzip, json, os, re, socket, subprocess, sys, threading, time, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -34,7 +34,8 @@ CONF = os.path.expanduser(os.environ.get("PI_DASHBOARD_CONF", "~/.config/pi-dash
 CWA_API = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/"
 CWA_TOWN = "大安區"                 # Xuefu Village (學府里) is in Da'an; the forecast is per district
 CWA_STATION = "A0A010"             # 臺灣大學 (NTU) weather + rain station, 0.8 km from the dorms
-YOUBIKE_URL = "https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json"
+YOUBIKE_URL = "https://apis.youbike.com.tw/json/station-yb2.json"   # all Taiwan, 6 MB (0.9 MB gzip); the Taipei
+                                   # city feed has the same totals but no normal/electric split
 YOUBIKE_STATION = "500101031"      # YouBike2.0_臺大男七舍前 (NTU 7th Men's Dorm), Changxing St.
 RADAR_JSON = "https://cwaopendata.s3.ap-northeast-1.amazonaws.com/Observation/O-A0058-003.json"
 RADAR_FRAME = "https://www.cwa.gov.tw/Data/radar/CV1_TW_3600_{:%Y%m%d%H%M}.png"   # past frames, every 10 min
@@ -107,10 +108,14 @@ images = {}                              # name -> (bytes, content type, time st
 images_lock = threading.Lock()
 
 
-def fetch(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": "pi-dashboard"})
+def fetch(url, timeout=15, compressed=False):
+    headers = {"User-Agent": "pi-dashboard"}
+    if compressed:
+        headers["Accept-Encoding"] = "gzip"
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        body = r.read()
+        return gzip.decompress(body) if r.headers.get("Content-Encoding") == "gzip" else body
 
 
 def cwa(dataset, **params):
@@ -205,11 +210,11 @@ def feed_surface():
 
 
 def feed_youbike():
-    for s in json.loads(fetch(YOUBIKE_URL)):
-        if s["sno"] == YOUBIKE_STATION:
-            return {"name": s["snaen"].replace("YouBike2.0_", ""), "bikes": s["available_rent_bikes"],
-                    "docks": s["available_return_bikes"], "total": s["Quantity"], "active": s["act"] == "1",
-                    "time": s["mday"][11:16]}
+    for s in json.loads(fetch(YOUBIKE_URL, timeout=30, compressed=True)):
+        if s["station_no"] == YOUBIKE_STATION:
+            kinds = s["available_spaces_detail"]    # yb2 = normal, eyb = electric (2.0E), yb1 = old 1.0 (none in Taipei)
+            return {"name": s["name_en"], "bikes": kinds["yb2"], "ebikes": kinds["eyb"], "docks": s["empty_spaces"],
+                    "total": s["parking_spaces"], "active": s["status"] == 1, "time": s["time"][11:16]}
     raise RuntimeError(f"YouBike station {YOUBIKE_STATION} not in the feed")
 
 

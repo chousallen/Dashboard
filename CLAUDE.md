@@ -83,7 +83,11 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
   the analysis time is only printed on the image).
 - YouBike: `tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json`, flat array, `sno` 500101031 =
   臺大男七舍前; fields `available_rent_bikes`, `available_return_bikes`, `Quantity`, `mday`. At 04:2x on 2026-10-23 it
-  reported 0 bikes and 0 docks for all 1822 stations (feed-side, not ours).
+  reported 0 bikes and 0 docks for all 1822 stations (feed-side, not ours). It has no normal/electric split, so the
+  server now reads `apis.youbike.com.tw/json/station-yb2.json` (all Taiwan, ~9700 stations, 6.3 MB, 0.93 MB with
+  `Accept-Encoding: gzip`): `station_no`, `available_spaces` = bikes (sic), `available_spaces_detail` {`yb1`, `yb2` =
+  normal, `eyb` = electric 2.0E} (parts always sum to the total), `empty_spaces` = docks, `parking_spaces`, `status` 1 =
+  open, 2 = closed (= `act` "0"), `time` = same as `mday`. `station-min-yb2.json` has no counts at all.
 
 ## Commands
 - State: `systemctl is-active pi-dashboard pi-dashboard-server moonlight-stream`; `curl -s 127.0.0.1:8766/api/status`.
