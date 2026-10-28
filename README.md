@@ -33,8 +33,9 @@ weather map, **Y** YouBike at NTU 7th Men's Dorm. With every panel hidden the pa
 
 Alarms: **A** opens the list (arrows choose, Enter changes or adds, Space on/off, Delete removes, Esc closes).
 From a shell: `pi-alarm`, `pi-alarm add 07:30 weekdays`, `pi-alarm off 1`, `pi-alarm rm 1`, `pi-alarm stop`,
-`pi-alarm test` (rings now). A ringing alarm plays on the 3.5 mm speaker, switches the monitor back on (unless the
-stream or the player is using it), and stops on any key or after 10 minutes.
+`pi-alarm test` (rings now). A ringing alarm plays on the 3.5 mm speaker and, if they are connected, the JLab
+headphones, switches the monitor back on (unless the stream or the player is using it), and stops on any key or after
+10 minutes.
 
 ## Install
 

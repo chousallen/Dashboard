@@ -9,7 +9,7 @@
   pi-alarm test                         ring now (stop it with any key on the Pi keyboard, or pi-alarm stop)
 
 Talks to pi-dashboard-server on 127.0.0.1:8766, which keeps the alarms in ~/.config/pi-dashboard/alarms.json and
-rings them on the 3.5 mm speaker.  Stdlib only.
+rings them on the 3.5 mm speaker and the JLab headphones (if connected).  Stdlib only.
 """
 import json, os, sys, urllib.error, urllib.request
 

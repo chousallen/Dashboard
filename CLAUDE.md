@@ -89,6 +89,11 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
   normal, `eyb` = electric 2.0E} (parts always sum to the total), `empty_spaces` = docks, `parking_spaces`, `status` 1 =
   open, 2 = closed (= `act` "0"), `time` = same as `mday`. `station-min-yb2.json` has no counts at all.
 
+- Alarm outputs (`ALARM_SINKS`): one `paplay --property=node.target=<sink name>` per sink present. `paplay --device`
+  and `pw-play --target` do nothing here: pipewire-pulse/pw-cat 1.0.7 send only `target.object`, which jammy WirePlumber
+  0.4.8 ignores (support came in 0.4.9), so the stream lands on the default sink. `node.target` takes the node name or
+  the PipeWire `object.id` (`wpctl status`), not the number `pactl list short sinks` prints (that is `object.serial`).
+
 ## Commands
 - State: `systemctl is-active pi-dashboard pi-dashboard-server moonlight-stream`; `curl -s 127.0.0.1:8766/api/status`.
 - Logs: `journalctl -u pi-dashboard` (cage + cog), `journalctl -u pi-dashboard-server` ("start stream: ok", "feed

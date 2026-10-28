@@ -10,7 +10,8 @@ Outside data (FEEDS, each on its own interval, last good value kept on error): C
 township forecast for Da'an and the NTU station's observation (key in ~/.config/pi-dashboard/cwa.key), the CWA radar
 echo and surface weather map images (served from memory at /img/<name>), YouBike 2.0 normal and electric bikes.
 Alarms: ~/.config/pi-dashboard/alarms.json, GET/POST /api/alarms (bin/pi-alarm is the command-line client); a ringing
-alarm plays ALARM_SOUND on the default PulseAudio sink (the 3.5 mm jack) and brings the dashboard back on the monitor.
+alarm plays ALARM_SOUND on the 3.5 mm jack and on the JLab headphones when they are connected (ALARM_SINKS), and brings
+the dashboard back on the monitor.
 
 Add a feature: write a probe function, register it in PROBES, read its key in app.js.
 Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
@@ -46,6 +47,8 @@ HOME = (25.017, 121.545)
 RADAR_CROP = "crop=1200:1200:{}:{},scale=600:600".format(round((HOME[1] - 1 - 118) * 600), round((26.5 - HOME[0] - 1) * 600))
 SURFACE_MAP = "https://www.cwa.gov.tw/Data/fcst_img/SFCcombo.jpg"                 # 地面天氣圖, every 6 h
 ALARM_SOUND = os.environ.get("PI_DASHBOARD_ALARM_SOUND", f"{STATIC}/alarm-chime.wav")   # made by bin/pi-alarm-chime
+# every sink that exists when a repeat starts plays it; the JLab (Bluetooth) is skipped while it is not connected
+ALARM_SINKS = ("alsa_output.room_speaker", "bluez_output.67_89_66_37_3C_18.a2dp-sink")
 ALARM_RING_S = 10 * 60             # a ringing alarm stops by itself after this long
 DISPLAY_UNITS = ("moonlight.service", "moonlight-stream.service", "pi-player.service")  # an alarm never stops these
 
@@ -365,16 +368,25 @@ def ring(alarm):
 def play():
     global ringing
     while not ring_stop.is_set() and time.time() - ringing["since"] < ALARM_RING_S:
+        rc, out = run(["pactl", "list", "short", "sinks"])
+        present = {line.split("\t")[1] for line in out.splitlines() if "\t" in line}
+        sinks = [s for s in ALARM_SINKS if s in present] or [None]   # None = default sink, if pactl itself failed
         try:
-            p = subprocess.Popen(["paplay", ALARM_SOUND], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            # WirePlumber 0.4.8 ignores --device (pipewire-pulse 1.0 sends it as target.object); it honours node.target
+            ps = [subprocess.Popen(["paplay", *([f"--property=node.target={s}"] if s else []), ALARM_SOUND],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) for s in sinks]
         except OSError as e:
             print(f"alarm sound: {e}", flush=True); break
-        while p.poll() is None and not ring_stop.wait(0.2):
+        while any(p.poll() is None for p in ps) and not ring_stop.wait(0.2):
             pass
-        if p.poll() is None:
-            p.terminate()
-        elif p.returncode != 0:
-            print(f"alarm sound: paplay exit {p.returncode}: {p.stderr.read().decode().strip()}", flush=True)
+        failed = False
+        for s, p in zip(sinks, ps):
+            if p.poll() is None:
+                p.terminate()
+            elif p.returncode != 0:
+                print(f"alarm sound: paplay {s or 'default'} exit {p.returncode}: {p.stderr.read().decode().strip()}", flush=True)
+                failed = True
+        if failed:
             ring_stop.wait(2)
     with alarm_lock:
         ringing = None
