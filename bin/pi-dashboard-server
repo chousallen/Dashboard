@@ -11,8 +11,9 @@ Outside data (FEEDS, each on its own interval, last good value kept on error): C
 township forecast for Da'an and the NTU station's observation (key in ~/.config/pi-dashboard/cwa.key), the CWA radar
 echo and surface weather map images (served from memory at /img/<name>), YouBike 2.0 normal and electric bikes.
 Alarms: ~/.config/pi-dashboard/alarms.json, GET/POST /api/alarms (bin/pi-alarm is the command-line client); a ringing
-alarm plays ALARM_SOUND on the 3.5 mm jack and on the JLab headphones when they are connected (ALARM_SINKS), and brings
-the dashboard back on the monitor.
+alarm plays ALARM_SOUND on the 3.5 mm jack and on the JLab headphones when they are connected (ALARM_SINKS). From
+ALARM_LEAD_MIN before it, and again when it rings, the dashboard is put in front (from the stream, a console or a dark
+monitor), so any key stops it; the monitor is not switched off in that window.
 
 Add a feature: write a probe function, register it in PROBES, read its key in app.js.
 Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed|streaming PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
@@ -51,7 +52,8 @@ ALARM_SOUND = os.environ.get("PI_DASHBOARD_ALARM_SOUND", f"{STATIC}/alarm-chime.
 # every sink that exists when a repeat starts plays it; the JLab (Bluetooth) is skipped while it is not connected
 ALARM_SINKS = ("alsa_output.room_speaker", "bluez_output.67_89_66_37_3C_18.a2dp-sink")
 ALARM_RING_S = 10 * 60             # a ringing alarm stops by itself after this long
-DISPLAY_UNITS = ("moonlight.service", "moonlight-stream.service", "pi-player.service")  # an alarm never stops these
+ALARM_LEAD_MIN = 1                 # put the dashboard in front this many minutes before an alarm rings
+DISPLAY_UNITS = ("moonlight.service", "pi-player.service")  # own tty1 (Conflicts= pi-dashboard); an alarm never stops these
 
 
 def run(cmd, timeout=2.0):
@@ -361,11 +363,33 @@ def ring(alarm):
         ringing = {"id": alarm.get("id"), "time": alarm["time"], "since": time.time()}
     ring_stop.clear()
     print(f"alarm {alarm['time']}: ringing", flush=True)
-    # bring the page back unless the stream or the player owns the monitor (pi-dashboard Conflicts= the blank unit)
-    rc, out = run(["systemctl", "is-active", *DISPLAY_UNITS])
-    if "active" not in out.split():
-        start_unit(DASHBOARD_UNIT)
+    show_dashboard(alarm["time"])        # again: a Ctrl+Alt+F2 during the lead minute put the stream back in front
     threading.Thread(target=play, daemon=True).start()
+
+
+def show_dashboard(why):
+    """Put the page in front so that a key stops the alarm. Behind the stream (tty2) or a console the page is still
+    running on tty1, so chvt 1 is enough and the stream keeps running; from a dark monitor start it (pi-dashboard
+    Conflicts= the blank unit). The player and the old Moonlight GUI own tty1 and are left alone."""
+    if MOCK:
+        return
+    rc, out = run(["systemctl", "is-active", DASHBOARD_UNIT, *DISPLAY_UNITS])
+    states = out.split()
+    if "active" in states[1:]:
+        print(f"alarm {why}: the player owns the monitor, dashboard not shown", flush=True)
+    elif states[:1] == ["active"]:
+        if not dashboard_in_front():
+            rc, out = run(["sudo", "-n", "chvt", "1"], timeout=5)
+            print(f"alarm {why}: chvt 1 {'ok' if rc == 0 else 'FAILED ' + out.strip()}", flush=True)
+    else:
+        ok, out = start_unit(DASHBOARD_UNIT)
+        print(f"alarm {why}: start dashboard {'ok' if ok else 'FAILED ' + out.strip()}", flush=True)
+
+
+def alarm_soon():
+    """True while an alarm rings or rings within ALARM_LEAD_MIN; the page must not switch the monitor off then."""
+    nxt = alarm_view()
+    return bool(nxt["ringing"]) or bool(nxt["next"] and nxt["next"]["next_ts"] - time.time() <= ALARM_LEAD_MIN * 60)
 
 
 def play():
@@ -422,6 +446,10 @@ def alarm_loop():
                     save_alarms(alarms)
             if due:
                 ring(due[0])                 # one sound for every alarm set to this minute
+            soon = now + datetime.timedelta(minutes=ALARM_LEAD_MIN)
+            if any(a["on"] and a["time"] == soon.strftime("%H:%M") and soon.weekday() in REPEAT_DAYS[a["repeat"]]
+                   for a in alarms):
+                show_dashboard(soon.strftime("%H:%M") + " soon")
         time.sleep(1)
 
 
@@ -538,6 +566,9 @@ class Handler(SimpleHTTPRequestHandler):
             if not dashboard_in_front():
                 print("blank: refused, a console is in front", flush=True)
                 return self.send_json({"ok": False, "detail": "a console is in front"}, 409)
+            if alarm_soon():
+                print("blank: refused, an alarm rings soon", flush=True)
+                return self.send_json({"ok": False, "detail": "an alarm rings soon"}, 409)
             return self.start("blank", BLANK_UNIT)
         if self.path == "/api/alarm/stop":
             stop_ring()
