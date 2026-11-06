@@ -23,10 +23,12 @@ chime=$(mktemp -d) && bin/pi-alarm-chime "$chime/alarm-chime.wav" && sudo instal
 install -d -m700 ~/.config/pi-dashboard      # cwa.key (CWA open-data key, one line), alarms.json, prefs.json
 [ -s ~/.config/pi-dashboard/cwa.key ] || echo "   no ~/.config/pi-dashboard/cwa.key - the weather panel stays empty until it exists"
 sudo install -m644 systemd/pi-dashboard.service systemd/pi-dashboard-server.service systemd/pi-dashboard-blank.service /etc/systemd/system/
+sudo install -m644 udev/71-pi-dashboard-keyboards-only.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger --action=change --subsystem-match=input
 sudo systemctl daemon-reload
 sudo systemctl enable pi-dashboard-server.service
 sudo systemctl restart pi-dashboard-server.service
 sudo systemctl disable moonlight.service 2>/dev/null || true     # Moonlight's own GUI stays as a manual fallback
 sudo systemctl enable pi-dashboard.service
 systemctl is-active pi-dashboard-server pi-dashboard | paste -sd' ' | sed 's/^/server dashboard: /'
-echo "done. Show it now (stops a running stream): sudo systemctl start pi-dashboard.service"
+echo "done. Show it now (a running stream stays on tty2): sudo systemctl start pi-dashboard.service"

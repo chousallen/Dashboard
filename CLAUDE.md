@@ -3,8 +3,21 @@
 Pi Room idle screen for the Raspberry Pi 4B (Ubuntu Server 22.04, no desktop, DRM/KMS only, one USB keyboard).
 Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-console-keys`, audio). Its units
 `moonlight-stream.service` / `pi-player.service` start `pi-dashboard.service` in `ExecStopPost`, and
-`pi-console-keys` has `MENU = "pi-dashboard.service"`. Only one unit may own DRM: every display unit
-`Conflicts=` + `After=` the others (`Conflicts=` alone gives no ordering).
+`pi-console-keys` has `MENU = "pi-dashboard.service"`. The dashboard (tty1) and `moonlight-stream` (tty2) run side by
+side: both VTs are in VT_PROCESS mode (tty1: logind for cage's session, tty2: SDL), so DRM master moves with the VT,
+Ctrl+Alt+F1 / F2 switch (pi-console-keys), Enter on the page = `POST /api/stream/show` = `chvt 2`. Every other pair
+of display units (player, old Moonlight GUI, pi-dashboard-blank) `Conflicts=` + `After=` (`Conflicts=` alone gives no
+ordering). The stream's `ExecStopPost` does `chvt 1` only if tty2 is in front. The page restarts its idle timer when
+`/api/status` `front` (tty1 in front) turns true, or the idle blank (which still stops the stream) could fire seconds
+after Ctrl+Alt+F1.
+- Switch timing stream -> dashboard (measured 2026-11-06 by sampling `/sys/kernel/debug/dri/1/state` every 20 ms and
+  `busctl monitor` on login1): chvt 1 done +50..120 ms (SDL acks the VT release only on its next event pump),
+  logind `ResumeDevice` +20 ms, then cage reopens every libinput device via `TakeDevice` (~25 ms each, serial),
+  re-probes the HDMI connector (EDID) and draws. `udev/71-pi-dashboard-keyboards-only.rules` (libinput ignores
+  non-keyboards) took cage's part from ~220 to ~130 ms. The one old frame seen meanwhile is SDL 2.32's
+  `KMSDRM_ReleaseVT` -> `KMSDRM_DestroySurfaces` restoring the CRTC to the buffer it found at video init = Moonlight's
+  Qt "Starting Desktop" frame; no hint disables it (needs an SDL patch in ~/room-devices). Back to the stream is
+  faster (SDL only sets master + its plane); the [fbcon] frame between is the fbdev helper while nobody is master.
 
 ## Units / files
 - `pi-dashboard.service` (tty1, `PAMName=login` gives cage a logind seat0 session = DRM master + libinput keyboard as
@@ -103,7 +116,7 @@ Companion repo: `~/room-devices` (Moonlight/Sunshine stream, media player, `pi-c
 - Test an alarm without noise: runtime drop-in `/run/systemd/system/pi-dashboard-server.service.d/x.conf` with
   `Environment=PI_DASHBOARD_ALARM_SOUND=<silent.wav>`, daemon-reload, restart the server, `pi-alarm test`; remove it after.
   The server needs `XDG_RUNTIME_DIR=/run/user/1000` (in its unit) for paplay to reach sallen's PipeWire.
-- Show the dashboard (stops a running stream): `sudo systemctl start pi-dashboard`. Old Moonlight GUI: `sudo systemctl start moonlight`.
+- Show the dashboard (a running stream stays on tty2): `sudo systemctl start pi-dashboard`. Old Moonlight GUI: `sudo systemctl start moonlight`.
 - Is cage drawing: `sudo cat /sys/kernel/debug/dri/1/framebuffer | grep -E 'allocated|modifier'` shows `cage` with `modifier=0x0`.
 - Monitor state: `cat /sys/class/drm/card1-HDMI-A-1/enabled` (`disabled` while pi-dashboard-blank is active) and
   `dpms`. DRM debug: `echo 0x4 | sudo tee /sys/module/drm/parameters/debug` (KMS; hotplug shows in `journalctl -k`),

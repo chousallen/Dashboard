@@ -2,9 +2,10 @@
 """HTTP backend for the Pi Room idle screen (pi-dashboard.service shows it in cog).
 
 Serves the static page, the local IBM Plex font files, /api/status (JSON, refreshed by a background thread)
-POST /api/stream/start (starts moonlight-stream.service; systemd then stops the browser) and POST /api/blank (starts
-pi-dashboard-blank.service: stops the browser, holds DRM master with every CRTC off = monitor asleep, any key
-brings the dashboard back).  Stdlib only.
+POST /api/stream/start (starts moonlight-stream.service on tty2; the browser keeps running on tty1 behind it),
+POST /api/stream/show (chvt 2: back to a running stream) and POST /api/blank (starts pi-dashboard-blank.service:
+stops the browser and the stream, holds DRM master with every CRTC off = monitor asleep, any key brings the
+dashboard back).  Stdlib only.
 
 Outside data (FEEDS, each on its own interval, last good value kept on error): CWA (Central Weather Administration)
 township forecast for Da'an and the NTU station's observation (key in ~/.config/pi-dashboard/cwa.key), the CWA radar
@@ -14,7 +15,7 @@ alarm plays ALARM_SOUND on the 3.5 mm jack and on the JLab headphones when they 
 the dashboard back on the monitor.
 
 Add a feature: write a probe function, register it in PROBES, read its key in app.js.
-Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
+Preview on a laptop: PI_DASHBOARD_MOCK=ready|away|nosunshine|busy|failed|streaming PI_DASHBOARD_DIR=pi/dashboard ./pi-dashboard-server
 """
 import datetime, gzip, json, os, re, socket, subprocess, sys, threading, time, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
@@ -233,6 +234,8 @@ MOCKS = {
     "away":       {"laptop": None, "sunshine": None},
     "failed":     {"laptop": {"rtt_ms": 2.1}, "sunshine": {"hostname": "sallen-laptop", "state": "SUNSHINE_SERVER_FREE"},
                    "stream": {"active": "failed", "result": "exit-code", "status": "1", "failed": True, "exited_at": "22:41"}},
+    "streaming":  {"laptop": {"rtt_ms": 2.1}, "sunshine": {"hostname": "sallen-laptop", "state": "SUNSHINE_SERVER_BUSY"},
+                   "stream": {"active": "active", "result": "success", "status": "0", "failed": False, "exited_at": None}},
 }
 
 # ---- collectors -------------------------------------------------------------------------------------------
@@ -488,6 +491,7 @@ class Handler(SimpleHTTPRequestHandler):
                 snap = dict(state)
             snap["alarm"] = alarm_view()
             snap["prefs"] = load_prefs()
+            snap["front"] = dashboard_in_front()     # the page restarts its idle timer when this turns true
             return self.send_json(snap)
         if self.path.startswith("/api/alarms"):
             return self.send_json(alarm_view())
@@ -528,6 +532,8 @@ class Handler(SimpleHTTPRequestHandler):
                 stop_ring()
                 return self.send_json({"ok": False, "detail": "alarm was ringing; stopped it instead"}, 409)
             return self.start("start stream", STREAM_UNIT)
+        if self.path == "/api/stream/show":
+            return self.show_stream()
         if self.path == "/api/blank":
             if not dashboard_in_front():
                 print("blank: refused, a console is in front", flush=True)
@@ -586,6 +592,17 @@ class Handler(SimpleHTTPRequestHandler):
         ok, out = start_unit(unit)
         print(f"{what}: {'ok' if ok else 'FAILED ' + out.strip()}", flush=True)
         return self.send_json({"ok": ok, "detail": out.strip()}, 200 if ok else 500)
+
+    def show_stream(self):
+        # the stream runs on tty2 while this page stays on tty1; Enter on the page switches back to it
+        if MOCK:
+            return self.send_json({"ok": True, "detail": "mock"})
+        rc, out = run(["systemctl", "is-active", STREAM_UNIT])
+        if out.strip() != "active":
+            return self.send_json({"ok": False, "detail": "the stream is not running"}, 409)
+        rc, out = run(["sudo", "-n", "chvt", "2"], timeout=5)
+        print(f"show stream: {'ok' if rc == 0 else 'FAILED ' + out.strip()}", flush=True)
+        return self.send_json({"ok": rc == 0, "detail": out.strip()}, 200 if rc == 0 else 500)
 
 
 def main():

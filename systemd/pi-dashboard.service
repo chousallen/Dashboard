@@ -1,6 +1,7 @@
 # Pi Room idle screen: a web page (served by pi-dashboard-server.service) shown full-screen on the HDMI
 # monitor by cog (WPE WebKit) as the single client of cage (a one-window Wayland kiosk compositor on
-# DRM/KMS, no desktop). Replaces the Moonlight menu on tty1.
+# DRM/KMS, no desktop). Replaces the Moonlight menu on tty1. It keeps running behind the stream (moonlight-stream,
+# tty2): Ctrl+Alt+F1 / F2 switch between them (pi-console-keys), logind moves DRM master with the VT.
 # Why cage and not `cog --platform=drm`: cog 0.12.1's own DRM output scans out a tiled buffer the Pi 4
 # display rejects ("failed to schedule a page flip: Invalid argument", meta-webkit #275) - black screen.
 # cage needs the xwayland package installed (jammy's build aborts without /usr/bin/Xwayland) and the locally
@@ -11,9 +12,9 @@ Description=Pi Room dashboard on the monitor
 # Conflicts= alone gives no ordering; After= makes systemd finish stopping the others before cog opens /dev/dri.
 # pi-dashboard-blank.service is deliberately NOT in After=: it already has After=pi-dashboard.service, and a mutual
 # After= makes `systemctl restart pi-dashboard` fail with "Transaction order is cyclic".
-After=user@1000.service systemd-user-sessions.service pi-dashboard-server.service moonlight.service moonlight-stream.service pi-player.service
+After=user@1000.service systemd-user-sessions.service pi-dashboard-server.service moonlight.service pi-player.service
 Wants=user@1000.service pi-dashboard-server.service
-Conflicts=getty@tty1.service moonlight.service moonlight-stream.service pi-player.service pi-dashboard-blank.service
+Conflicts=getty@tty1.service moonlight.service pi-player.service pi-dashboard-blank.service
 
 [Service]
 User=sallen

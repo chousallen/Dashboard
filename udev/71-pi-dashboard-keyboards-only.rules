@@ -1,0 +1,5 @@
+# cage (libinput) uses only keyboards. Every time the dashboard comes back to the front (Ctrl+Alt+F1 from the
+# stream on tty2) cage reopens each libinput device through logind, one by one, ~25 ms each; the HyperX keyboard
+# alone shows up as 6 event devices and vc4 HDMI adds 2 more. Keyboards only: ~0.1 s faster switch.
+# Raw evdev readers (Moonlight/SDL, pi-console-keys, pi-dashboard-blank) ignore this property.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}!="1", ENV{LIBINPUT_IGNORE_DEVICE}="1"

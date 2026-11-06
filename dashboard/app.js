@@ -1,11 +1,12 @@
 // Pi Room idle screen: polls /api/status and maps it to one of the states below.
-// Keys: Enter = start the stream (or check again when it cannot start), R = check again, B = monitor off now,
+// Keys: Enter = start the stream (back to it while it runs on tty2; check again when it cannot start), R = check again,
+// B = monitor off now (ends a stream running behind this page),
 // W / E / S / Y = show or hide the weather, radar echo, surface map and YouBike panels (choice kept by the server),
 // A = alarm list (its own keys while open). While an alarm rings, any key stops it and does nothing else.
 // After IDLE_MS without a key the page asks the server to switch the monitor off (pi-dashboard-blank.service
 // replaces this browser; any key starts it again). If the server cannot be reached the page goes black itself
 // instead, and then the next key only wakes it (it is not acted on).
-// Ctrl+Alt+Fx is handled outside the browser by pi-console-keys.
+// Ctrl+Alt+Fx is handled outside the browser by pi-console-keys (F1 = this page on tty1, F2 = the stream on tty2).
 "use strict";
 
 const POLL_MS = 3000;      // normal refresh
@@ -20,6 +21,7 @@ const el = {
   action: document.getElementById("action"),
   actionLabel: document.getElementById("action-label"),
   note: document.getElementById("note"),
+  endHint: document.getElementById("end-hint"),
   clock: document.getElementById("clock"),
   pi: document.getElementById("pi"),
   nextAlarm: document.getElementById("next-alarm"),
@@ -34,6 +36,7 @@ let status = null;        // last /api/status payload
 let starting = false;     // Enter was pressed; waiting for systemd to take the screen
 let pollTimer = null;
 let checkedAt = null;     // time of the last manual check (R or Enter while it cannot start)
+let front = true;         // tty1 (this page) is on the monitor, from /api/status
 let blank = false;        // page-side black screen (fallback when /api/blank failed); polling continues underneath
 let idleTimer = null;
 let hidden = null;        // panels the viewer hid; read once from the server's prefs, then owned by the page
@@ -57,7 +60,7 @@ function describe(s) {
     return { key: "checking", h: "Checking the laptop", d: "One moment.", enter: null };
   }
   if (s.stream && s.stream.active === "active") {
-    return { key: "starting", h: "Stream is running", d: "This screen should be gone. Press Enter if it stays.", enter: "start" };
+    return { key: "starting", h: "The stream is running", d: "Enter or Ctrl+Alt+F2 goes back to it. Ctrl+Alt+Shift+Q ends it.", enter: "show" };
   }
   if (s.stream && s.stream.failed) {
     const when = s.stream.exited_at ? " at " + s.stream.exited_at : "";
@@ -87,8 +90,9 @@ function render() {
   el.state.textContent = v.h;
   el.detail.textContent = v.d;
   el.action.hidden = !v.enter;
-  el.note.hidden = v.enter !== "start";
-  el.actionLabel.textContent = v.enter === "start" ? "Start the stream" : "Check again";
+  el.note.hidden = v.enter !== "start" && v.enter !== "show";
+  el.endHint.hidden = v.enter !== "show";        // the note above is hidden while panels are shown
+  el.actionLabel.textContent = { start: "Start the stream", show: "Back to the stream" }[v.enter] || "Check again";
   if (status && status.pi) {
     el.pi.textContent = status.pi.hostname + "  " + status.pi.ip;
   }
@@ -316,6 +320,10 @@ async function poll() {
     const r = await fetch("/api/status", { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     status = await r.json();
+    // Back on tty1 after the stream or a console: the page saw no keys meanwhile, so give it a full IDLE_MS again
+    // (or the idle blank could end the stream seconds after Ctrl+Alt+F1).
+    if (status.front && !front) touch();
+    front = status.front !== false;
   } catch (e) {
     status = null;
     delay = RETRY_MS;
@@ -330,7 +338,7 @@ async function startStream() {
   try {
     const r = await fetch("/api/stream/start", { method: "POST" });
     if (!r.ok) throw new Error("HTTP " + r.status);
-    // systemd now stops this browser; if it does not within 8 s, show the status again
+    // the stream switches the monitor to tty2 (this page keeps running on tty1); after 8 s show the status again
     setTimeout(() => { starting = false; poll(); }, 8000);
   } catch (e) {
     starting = false;
@@ -351,6 +359,7 @@ const KEYS = {
   Enter: () => {
     const v = describe(status);
     if (v.enter === "start") startStream();
+    else if (v.enter === "show") fetch("/api/stream/show", { method: "POST" }).catch(() => {});
     else if (v.enter === "check") checkNow();
   },
   r: () => checkNow(),
